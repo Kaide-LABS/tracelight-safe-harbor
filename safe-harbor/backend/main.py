@@ -8,7 +8,10 @@ from backend.config import get_settings
 from backend.orchestrator import PipelineOrchestrator
 from backend.models.schemas import JobState
 
+from fastapi.staticfiles import StaticFiles
+
 app = FastAPI()
+app.mount("/templates", StaticFiles(directory="templates"), name="templates")
 settings = get_settings()
 
 app.add_middleware(
