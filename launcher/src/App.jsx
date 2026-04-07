@@ -1,4 +1,5 @@
 import React from 'react';
+import { SAFE_HARBOR_URL, SHIELD_WALL_URL } from './config';
 
 function App() {
   return (
@@ -23,7 +24,7 @@ function App() {
           <p className="text-harbor-border mb-8 flex-1">
             Generate mathematically verified synthetic data for empty Excel templates. Zero sensitive data. Instant testing.
           </p>
-          <a href="http://localhost:5174" className="block w-full py-3 text-center bg-harbor-bg border border-harbor-border hover:bg-harbor-green hover:text-black hover:border-harbor-green rounded font-bold transition-colors">
+          <a href={SAFE_HARBOR_URL} className="block w-full py-3 text-center bg-harbor-bg border border-harbor-border hover:bg-harbor-green hover:text-black hover:border-harbor-green rounded font-bold transition-colors">
             Launch Safe-Harbor
           </a>
         </div>
@@ -39,7 +40,7 @@ function App() {
           <p className="text-harbor-border mb-8 flex-1">
             Answer vendor security questionnaires in minutes. AI-powered with live infrastructure evidence.
           </p>
-          <a href="http://localhost:5175" className="block w-full py-3 text-center bg-harbor-bg border border-harbor-border hover:bg-harbor-blue hover:text-black hover:border-harbor-blue rounded font-bold transition-colors">
+          <a href={SHIELD_WALL_URL} className="block w-full py-3 text-center bg-harbor-bg border border-harbor-border hover:bg-harbor-blue hover:text-black hover:border-harbor-blue rounded font-bold transition-colors">
             Launch Shield-Wall
           </a>
         </div>

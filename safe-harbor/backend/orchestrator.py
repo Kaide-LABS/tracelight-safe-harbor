@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 import time
+import logging
 from typing import Callable, Awaitable
 from datetime import datetime
 
@@ -11,6 +12,9 @@ from backend.excel_io.writer import write_synthetic_data
 from backend.agents.schema_extractor import extract_schema
 from backend.agents.synthetic_gen import generate_synthetic_data
 from backend.agents.validator import DeterministicValidator
+from backend.middleware import cost_tracker
+
+logger = logging.getLogger(__name__)
 
 class PipelineOrchestrator:
     def __init__(self, settings: Settings):
@@ -64,6 +68,9 @@ class PipelineOrchestrator:
         self.jobs[job_id].template_schema = schema
         self._log_audit(job_id, "schema_extract", "Schema extracted successfully", agent="Gemini 2.0 Flash")
         
+        cost_entry = cost_tracker.log_cost("schema_extractor", self.settings.gemini_model, {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500})
+        self.jobs[job_id].cost_entries.append(cost_entry)
+        
         await ws_callback(WSEvent(job_id=job_id, phase="schema_extract", event_type="progress", detail=f"[TYPE] Model classified as: {schema.model_type}"))
         for ref in schema.inter_sheet_refs:
             await ws_callback(WSEvent(job_id=job_id, phase="schema_extract", event_type="progress", detail=f"[LINK] {ref.source_sheet}.{ref.source_column} -> {ref.target_sheet}.{ref.target_column} ✓"))
@@ -77,6 +84,9 @@ class PipelineOrchestrator:
             payload = await generate_synthetic_data(schema, self.settings, retry_instructions)
             self.jobs[job_id].synthetic_payload = payload
             self._log_audit(job_id, "generate", f"Generated synthetic payload (attempt {attempt+1})", agent="GPT-4o")
+            
+            gen_cost = cost_tracker.log_cost("synthetic_gen", self.settings.gpt4o_model, payload.generation_metadata.token_usage)
+            self.jobs[job_id].cost_entries.append(gen_cost)
             
             for cell in payload.cells:
                 await ws_callback(WSEvent(

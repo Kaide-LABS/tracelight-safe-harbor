@@ -1,8 +1,11 @@
 import json
+import logging
 import asyncio
 from openai import AsyncOpenAI
 from backend.models.schemas import SecurityQuestion, TelemetryEvidence, PolicyCitation, DraftAnswer
 from backend.config import ShieldWallSettings
+
+logger = logging.getLogger(__name__)
 
 SYNTHESIS_SYSTEM_PROMPT = """
 You are a senior information security analyst drafting responses to a vendor
@@ -50,7 +53,7 @@ async def synthesize_answers(questions: list[SecurityQuestion], telemetry: dict[
             ans.policy_citations = p_cit
             return ans
         except Exception as e:
-            print(f"Error synthesizing Q{q.id}: {e}")
+            logger.error(f"Error synthesizing Q{q.id}: {e}")
             return DraftAnswer(
                 question_id=q.id,
                 answer_text="Error generating answer.",

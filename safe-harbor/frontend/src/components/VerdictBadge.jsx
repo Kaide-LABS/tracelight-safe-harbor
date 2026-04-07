@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import AuditTrail from './AuditTrail';
+import { API_BASE } from '../config';
 
 export default function VerdictBadge({ jobId, result, schema }) {
   const [showAudit, setShowAudit] = useState(false);
 
   const handleDownload = () => {
-    window.location.href = `http://localhost:8000/api/download/${jobId}`;
+    window.location.href = `${API_BASE}/api/download/${jobId}`;
   };
 
   return (

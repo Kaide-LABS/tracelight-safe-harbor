@@ -1,10 +1,13 @@
 import json
+import logging
 import asyncio
 from datetime import datetime
 from openai import AsyncOpenAI
 from backend.models.schemas import SecurityQuestion, TelemetryEvidence
 from backend.telemetry.base import TelemetryAdapter
 from backend.config import ShieldWallSettings
+
+logger = logging.getLogger(__name__)
 
 TELEMETRY_TOOLS = [
     {
@@ -130,7 +133,7 @@ Do NOT fabricate evidence. If no relevant data is found, say so.
                 ))
                 
     except Exception as e:
-        print(f"Error gathering telemetry for Q{q.id}: {e}")
+        logger.error(f"Error gathering telemetry for Q{q.id}: {e}")
         
     return evidence_list
 

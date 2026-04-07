@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE } from '../config';
 
 const SAMPLE_TEMPLATES = [
   { name: 'LBO Template', file: 'lbo_template.xlsx' },
@@ -17,7 +18,7 @@ export default function UploadZone({ onJobCreated }) {
     formData.append('file', file);
 
     try {
-      const res = await fetch('http://localhost:8000/api/upload', {
+      const res = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
         body: formData,
       });

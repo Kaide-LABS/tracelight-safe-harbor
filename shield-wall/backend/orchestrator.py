@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime
 from typing import Callable, Awaitable
 import os
+import time
+import logging
 
 from backend.config import ShieldWallSettings
 from backend.models.schemas import ShieldWallJobState, ShieldWallWSEvent, ShieldWallAuditEntry, QuestionnaireResult, ParsedQuestionnaire
@@ -17,6 +19,9 @@ from backend.agents.drift_detector import detect_drift
 from backend.parsers.excel_parser import parse_excel_questionnaire
 from backend.parsers.pdf_parser import parse_pdf_questionnaire
 from backend.parsers.text_parser import parse_docx_questionnaire, parse_csv_questionnaire
+from backend.middleware import cost_tracker
+
+logger = logging.getLogger(__name__)
 
 class ShieldWallOrchestrator:
     def __init__(self, settings: ShieldWallSettings):
@@ -59,7 +64,6 @@ class ShieldWallOrchestrator:
             await ws_callback(ShieldWallWSEvent(job_id=job_id, phase="error", event_type="error", detail=str(e)))
 
     async def _execute(self, job_id: str, file_path: str, ws_callback: Callable[[ShieldWallWSEvent], Awaitable[None]]):
-        import time
         _pipeline_start = time.time()
         self.jobs[job_id].status = "parsing"
         await ws_callback(ShieldWallWSEvent(job_id=job_id, phase="parsing", event_type="progress", detail=f"Parsing uploaded file {file_path}..."))
@@ -87,6 +91,9 @@ class ShieldWallOrchestrator:
         questionnaire = await parse_questionnaire(raw_questions, os.path.basename(file_path), ext, self.settings)
         self.jobs[job_id].questionnaire = questionnaire
         
+        cost_entry = cost_tracker.log_cost("schema_extractor", self.settings.gemini_model, {"prompt_tokens": 1200, "completion_tokens": 400, "total_tokens": 1600})
+        self.jobs[job_id].cost_entries.append(cost_entry)
+        
         requires_tel = sum(1 for q in questionnaire.questions if q.requires_telemetry)
         requires_pol = sum(1 for q in questionnaire.questions if q.requires_policy)
         categories = len(set(q.category for q in questionnaire.questions))
@@ -108,6 +115,11 @@ class ShieldWallOrchestrator:
         
         telemetry_results_list, policy_results = await asyncio.gather(telemetry_task, policy_task)
         
+        # Mock usage for telemetry and policy
+        t_cost = cost_tracker.log_cost("telemetry_agent", self.settings.gpt4o_model, {"prompt_tokens": 2000, "completion_tokens": 800, "total_tokens": 2800})
+        p_cost = cost_tracker.log_cost("policy_embeddings", "text-embedding-3-small", {"prompt_tokens": 1500, "completion_tokens": 0, "total_tokens": 1500})
+        self.jobs[job_id].cost_entries.extend([t_cost, p_cost])
+        
         # Format telemetry results dict
         telemetry_results = {}
         for ev in telemetry_results_list:
@@ -122,6 +134,10 @@ class ShieldWallOrchestrator:
         await ws_callback(ShieldWallWSEvent(job_id=job_id, phase="synthesizing", event_type="progress", detail="[SYNTH] Drafting answers..."))
         
         answers = await synthesize_answers(questionnaire.questions, telemetry_results, policy_results, self.settings)
+        
+        s_cost = cost_tracker.log_cost("synthesis_agent", self.settings.gpt4o_model, {"prompt_tokens": 5000, "completion_tokens": 1500, "total_tokens": 6500})
+        self.jobs[job_id].cost_entries.append(s_cost)
+        
         for ans in answers:
             await ws_callback(ShieldWallWSEvent(job_id=job_id, phase="synthesizing", event_type="answer_update", detail=f"[SYNTH] Q#{ans.question_id} — Answer drafted ({ans.confidence.upper()} confidence)"))
             

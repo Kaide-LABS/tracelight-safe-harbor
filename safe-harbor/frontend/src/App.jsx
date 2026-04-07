@@ -4,6 +4,7 @@ import SchemaTerminal from './components/SchemaTerminal';
 import DataWaterfall from './components/DataWaterfall';
 import VerdictBadge from './components/VerdictBadge';
 import { useWebSocket } from './hooks/useWebSocket';
+import { API_BASE } from './config';
 
 function App() {
   const [jobId, setJobId] = useState(null);
@@ -18,7 +19,7 @@ function App() {
     if (lastEvent?.event_type === 'complete') {
       setAppPhase('VERDICT');
       // Fetch full job state from audit endpoint to get real schema data
-      fetch(`http://localhost:8000/api/audit/${jobId}`)
+      fetch(`${API_BASE}/api/audit/${jobId}`)
         .then(res => res.json())
         .then(data => setAuditData(data))
         .catch(() => {});

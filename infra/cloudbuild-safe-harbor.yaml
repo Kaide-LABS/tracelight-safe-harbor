@@ -1,0 +1,31 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - gcr.io/$PROJECT_ID/safe-harbor-backend:$COMMIT_SHA
+      - -t
+      - gcr.io/$PROJECT_ID/safe-harbor-backend:latest
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args: [push, gcr.io/$PROJECT_ID/safe-harbor-backend:$COMMIT_SHA]
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - safe-harbor-backend
+      - --image=gcr.io/$PROJECT_ID/safe-harbor-backend:$COMMIT_SHA
+      - --region=europe-west1
+      - --platform=managed
+      - --allow-unauthenticated
+      - --memory=1Gi
+      - --cpu=1
+      - --max-instances=3
+      - --set-env-vars=OPENAI_API_KEY=$$OPENAI_API_KEY,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=europe-west1
+
+images:
+  - gcr.io/$PROJECT_ID/safe-harbor-backend:$COMMIT_SHA
+  - gcr.io/$PROJECT_ID/safe-harbor-backend:latest

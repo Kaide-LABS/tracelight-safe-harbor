@@ -5,6 +5,7 @@ import AnswerGrid from './components/AnswerGrid';
 import DriftAlerts from './components/DriftAlerts';
 import ExportPanel from './components/ExportPanel';
 import { useWebSocket } from './hooks/useWebSocket';
+import { API_BASE } from './config';
 
 function App() {
   const [jobId, setJobId] = useState(null);
@@ -22,7 +23,7 @@ function App() {
       setAppPhase('COMPLETE');
       
       // Fetch full result for drift alerts
-      fetch(`http://localhost:8001/api/result/${jobId}`)
+      fetch(`${API_BASE}/api/result/${jobId}`)
         .then(res => res.json())
         .then(data => {
             setDriftAlerts(data.drift_alerts);

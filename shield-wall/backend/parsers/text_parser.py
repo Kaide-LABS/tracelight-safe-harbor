@@ -1,6 +1,9 @@
 import docx
 import pandas as pd
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 def parse_docx_questionnaire(file_path: str) -> list[dict]:
     questions = []
@@ -15,7 +18,7 @@ def parse_docx_questionnaire(file_path: str) -> list[dict]:
                     "paragraph_index": i
                 })
     except Exception as e:
-        print(f"Error parsing DOCX: {e}")
+        logger.error(f"Error parsing DOCX: {e}")
     return questions
 
 def parse_csv_questionnaire(file_path: str) -> list[dict]:
@@ -40,5 +43,5 @@ def parse_csv_questionnaire(file_path: str) -> list[dict]:
                         "row": idx + 2 # +2 to account for header and 0-indexing
                     })
     except Exception as e:
-        print(f"Error parsing CSV: {e}")
+        logger.error(f"Error parsing CSV: {e}")
     return questions

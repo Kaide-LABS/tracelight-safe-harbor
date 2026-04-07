@@ -1,5 +1,8 @@
+import logging
 from openai import AsyncOpenAI
 from backend.models.schemas import PolicyCitation
+
+logger = logging.getLogger(__name__)
 
 async def retrieve_policy_citations(query: str, collection, settings) -> list[PolicyCitation]:
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -30,5 +33,5 @@ async def retrieve_policy_citations(query: str, collection, settings) -> list[Po
                     ))
         return citations
     except Exception as e:
-        print(f"Retrieval error: {e}")
+        logger.error(f"Retrieval error: {e}")
         return []

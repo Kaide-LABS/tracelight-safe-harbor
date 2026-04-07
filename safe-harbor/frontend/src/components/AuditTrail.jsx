@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE } from '../config';
 
 export default function AuditTrail({ jobId }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`http://localhost:8000/api/audit/${jobId}`)
+    fetch(`${API_BASE}/api/audit/${jobId}`)
       .then(res => res.json())
       .then(d => {
         setData(d);

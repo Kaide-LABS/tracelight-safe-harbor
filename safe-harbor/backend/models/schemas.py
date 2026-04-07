@@ -106,6 +106,7 @@ class JobState(BaseModel):
     synthetic_payload: Optional[SyntheticPayload] = None
     validation_result: Optional[ValidationResult] = None
     audit_log: List[AuditLogEntry] = Field(default_factory=list)
+    cost_entries: List[dict] = Field(default_factory=list)
     output_file_path: Optional[str] = None
     error_message: Optional[str] = None
     retry_count: int = 0

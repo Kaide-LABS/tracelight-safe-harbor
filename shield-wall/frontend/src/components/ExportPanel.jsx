@@ -1,10 +1,11 @@
 import React from 'react';
+import { API_BASE } from '../config';
 
 export default function ExportPanel({ result, jobId }) {
   if (!result) return null;
 
   const handleExport = () => {
-    window.location.href = `http://localhost:8001/api/export/${jobId}`;
+    window.location.href = `${API_BASE}/api/export/${jobId}`;
   };
 
   return (

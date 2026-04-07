@@ -1,22 +1,39 @@
 import os
 import uuid
 import json
+import logging
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from backend.config import get_settings
 from backend.orchestrator import PipelineOrchestrator
 from backend.models.schemas import JobState
+from backend.middleware.logging_middleware import StructuredLoggingMiddleware
+from backend.health import router as health_router
 
 from fastapi.staticfiles import StaticFiles
 
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
+app.include_router(health_router)
+app.add_middleware(StructuredLoggingMiddleware)
+
 app.mount("/templates", StaticFiles(directory="templates"), name="templates")
 settings = get_settings()
 
+allowed_origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    os.getenv("FRONTEND_ORIGIN", ""),
+]
+allowed_origins = [o for o in allowed_origins if o]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,7 +82,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     try:
         await orchestrator.run_pipeline(job_id, file_path, ws_callback)
     except WebSocketDisconnect:
-        print(f"Client disconnected for job {job_id}")
+        logger.info(f"Client disconnected for job {job_id}")
     finally:
         pass
 
@@ -94,3 +111,17 @@ async def get_audit(job_id: str):
         raise HTTPException(status_code=400, detail="Job still pending")
         
     return job.model_dump()
+
+@app.get("/api/costs/{job_id}")
+async def get_costs(job_id: str):
+    if job_id not in orchestrator.jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = orchestrator.jobs[job_id]
+    entries = getattr(job, "cost_entries", [])
+    total_cost = sum(e.estimated_cost_usd for e in entries)
+    return {
+        "job_id": job_id,
+        "entries": [e.model_dump() for e in entries],
+        "total_cost_usd": total_cost
+    }

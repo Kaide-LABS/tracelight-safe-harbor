@@ -28,7 +28,7 @@ services:
     volumes:
       - ./shield-wall/data:/app/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
       timeout: 5s
       retries: 3

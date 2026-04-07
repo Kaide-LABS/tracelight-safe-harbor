@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-safe-harbor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: safe-harbor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pip install pytest
+      - run: python -m pytest tests/ -v --tb=short
+
+  test-shield-wall:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shield-wall
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pip install pytest pytest-asyncio
+      - run: python -m pytest tests/ -v --tb=short
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check safe-harbor/backend/ shield-wall/backend/ --select E,F,W --ignore E501

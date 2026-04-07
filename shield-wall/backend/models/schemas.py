@@ -89,6 +89,7 @@ class ShieldWallJobState(BaseModel):
     result: Optional[QuestionnaireResult] = None
     drift_alerts: List[DriftAlert] = Field(default_factory=list)
     audit_log: List[ShieldWallAuditEntry] = Field(default_factory=list)
+    cost_entries: List[dict] = Field(default_factory=list)
     error_message: Optional[str] = None
 
 class ShieldWallWSEvent(BaseModel):

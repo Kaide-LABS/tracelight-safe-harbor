@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE } from '../config';
 
 export default function QuestionnaireUpload({ onJobCreated }) {
   const [error, setError] = useState(null);
@@ -22,7 +23,7 @@ export default function QuestionnaireUpload({ onJobCreated }) {
     formData.append('file', file);
 
     try {
-      const res = await fetch('http://localhost:8001/api/upload', {
+      const res = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
         body: formData,
       });

@@ -1,8 +1,11 @@
 import os
+import logging
 import chromadb
 from openai import OpenAI
 import PyPDF2
 import docx
+
+logger = logging.getLogger(__name__)
 
 def index_policies(policy_dir: str, settings):
     client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
@@ -62,6 +65,6 @@ def index_policies(policy_dir: str, settings):
                     metadatas=[{"source": filename, "section": "General", "chunk_index": i}]
                 )
             except Exception as e:
-                print(f"Error indexing chunk {i} of {filename}: {e}")
+                logger.error(f"Error indexing chunk {i} of {filename}: {e}")
                 
     return collection

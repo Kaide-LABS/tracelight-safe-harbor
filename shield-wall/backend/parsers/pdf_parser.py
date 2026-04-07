@@ -1,5 +1,8 @@
 import PyPDF2
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 def parse_pdf_questionnaire(file_path: str) -> list[dict]:
     questions = []
@@ -26,6 +29,6 @@ def parse_pdf_questionnaire(file_path: str) -> list[dict]:
                     "page": -1 # page tracking simplified
                 })
     except Exception as e:
-        print(f"Error parsing PDF: {e}")
+        logger.error(f"Error parsing PDF: {e}")
         
     return questions

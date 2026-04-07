@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { WS_BASE } from '../config';
 
 export function useWebSocket(jobId) {
   const [events, setEvents] = useState([]);
@@ -10,7 +11,7 @@ export function useWebSocket(jobId) {
   useEffect(() => {
     if (!jobId) return;
 
-    ws.current = new WebSocket(`ws://localhost:8000/ws/${jobId}`);
+    ws.current = new WebSocket(`${WS_BASE}/ws/${jobId}`);
 
     ws.current.onopen = () => {
       setIsConnected(true);
