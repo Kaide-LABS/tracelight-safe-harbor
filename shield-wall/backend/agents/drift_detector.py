@@ -6,6 +6,7 @@ to detect contradictions. Does NOT rely solely on the synthesis agent's
 drift_detected flag — it performs its own analysis.
 """
 
+import json
 from backend.models.schemas import DraftAnswer, DriftAlert
 
 
@@ -28,7 +29,8 @@ def _extract_telemetry_text(ans: DraftAnswer) -> str:
     parts = []
     for ev in ans.telemetry_evidence:
         parts.append(ev.summary.lower())
-        parts.append(str(ev.raw_result).lower())
+        # Use json.dumps for consistent double-quote format
+        parts.append(json.dumps(ev.raw_result).lower())
     return " ".join(parts)
 
 
@@ -183,7 +185,7 @@ def _check_network_drift(ans: DraftAnswer) -> list[DriftAlert]:
     # Check specifically for non-443 ports open to the world
     has_non_443_public = False
     for ev in ans.telemetry_evidence:
-        raw = str(ev.raw_result).lower()
+        raw = json.dumps(ev.raw_result).lower()
         if "0.0.0.0/0" in raw and any(
             p in raw for p in ['"fromport": 22', '"fromport": 8080', '"fromport": 3389', '"fromport": 80']
         ):
