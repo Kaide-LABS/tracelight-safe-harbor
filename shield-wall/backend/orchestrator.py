@@ -59,6 +59,8 @@ class ShieldWallOrchestrator:
             await ws_callback(ShieldWallWSEvent(job_id=job_id, phase="error", event_type="error", detail=str(e)))
 
     async def _execute(self, job_id: str, file_path: str, ws_callback: Callable[[ShieldWallWSEvent], Awaitable[None]]):
+        import time
+        _pipeline_start = time.time()
         self.jobs[job_id].status = "parsing"
         await ws_callback(ShieldWallWSEvent(job_id=job_id, phase="parsing", event_type="progress", detail=f"Parsing uploaded file {file_path}..."))
         
@@ -147,7 +149,7 @@ class ShieldWallOrchestrator:
             drift_alerts=len(drift_alerts),
             needs_review=needs_review,
             answers=answers,
-            processing_time_ms=5000, # mock for now
+            processing_time_ms=int((time.time() - _pipeline_start) * 1000),
             export_ready=True
         )
         

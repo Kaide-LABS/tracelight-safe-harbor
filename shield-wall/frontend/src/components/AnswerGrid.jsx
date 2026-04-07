@@ -16,31 +16,39 @@ export default function AnswerGrid({ result }) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="p-4 border-b border-harbor-border flex gap-4 bg-harbor-surface">
-        <button onClick={() => setFilter('ALL')} className={`px-3 py-1 rounded ${filter==='ALL'?'bg-harbor-blue text-black':'text-harbor-text'}`}>All</button>
+        <button onClick={() => setFilter('ALL')} className={`px-3 py-1 rounded ${filter==='ALL'?'bg-harbor-blue text-black':'text-harbor-text'}`}>All ({result.answers.length})</button>
+        <button onClick={() => setFilter('HIGH')} className={`px-3 py-1 rounded ${filter==='HIGH'?'bg-harbor-green text-black':'text-harbor-text'}`}>High Conf</button>
         <button onClick={() => setFilter('REVIEW')} className={`px-3 py-1 rounded ${filter==='REVIEW'?'bg-harbor-red text-black':'text-harbor-text'}`}>Needs Review</button>
         <button onClick={() => setFilter('DRIFT')} className={`px-3 py-1 rounded ${filter==='DRIFT'?'bg-harbor-amber text-black':'text-harbor-text'}`}>Drift</button>
       </div>
-      
+
       <div className="flex-1 overflow-auto p-4">
         <table className="w-full text-left border-collapse text-sm">
           <thead>
             <tr className="bg-harbor-surface border-b border-harbor-border">
-              <th className="p-2">#</th>
+              <th className="p-2 w-12">#</th>
+              <th className="p-2 w-28">Category</th>
               <th className="p-2">Answer</th>
-              <th className="p-2">Confidence</th>
-              <th className="p-2">Review</th>
+              <th className="p-2 w-24">Confidence</th>
+              <th className="p-2 w-24">Sources</th>
+              <th className="p-2 w-16">Review</th>
             </tr>
           </thead>
           <tbody>
             {filteredAnswers.map((ans) => {
               const isExp = expanded === ans.question_id;
+              const hasTelemetry = ans.telemetry_evidence && ans.telemetry_evidence.length > 0;
+              const hasPolicy = ans.policy_citations && ans.policy_citations.length > 0;
               return (
                 <React.Fragment key={ans.question_id}>
-                  <tr 
+                  <tr
                     className="border-b border-harbor-border hover:bg-harbor-surface cursor-pointer"
                     onClick={() => setExpanded(isExp ? null : ans.question_id)}
                   >
                     <td className="p-2 align-top">{ans.question_id}</td>
+                    <td className="p-2 align-top">
+                      <span className="text-xs text-harbor-border">{(ans.evidence_sources?.[0] || 'other').replace('_', ' ')}</span>
+                    </td>
                     <td className="p-2">
                       <div className="truncate max-w-xl font-medium">{ans.answer_text}</div>
                     </td>
@@ -50,15 +58,44 @@ export default function AnswerGrid({ result }) {
                       </span>
                     </td>
                     <td className="p-2">
+                      <div className="flex gap-1 flex-wrap">
+                        {hasTelemetry && <span className="px-1.5 py-0.5 rounded text-xs bg-harbor-green/20 text-harbor-green">Telemetry</span>}
+                        {hasPolicy && <span className="px-1.5 py-0.5 rounded text-xs bg-harbor-blue/20 text-harbor-blue">Policy</span>}
+                        {!hasTelemetry && !hasPolicy && <span className="text-xs text-harbor-border">None</span>}
+                      </div>
+                    </td>
+                    <td className="p-2">
                       <input type="checkbox" checked={ans.needs_human_review} readOnly />
                     </td>
                   </tr>
                   {isExp && (
                     <tr className="bg-[#0D1117] border-b border-harbor-border">
-                      <td colSpan="4" className="p-4">
-                        <div className="mb-2"><strong>Answer:</strong> {ans.answer_text}</div>
+                      <td colSpan="6" className="p-4 space-y-3">
+                        <div><strong>Full Answer:</strong> {ans.answer_text}</div>
                         {ans.drift_detected && (
-                          <div className="text-harbor-red mb-2"><strong>Drift:</strong> {ans.drift_detail}</div>
+                          <div className="text-harbor-red"><strong>Drift:</strong> {ans.drift_detail}</div>
+                        )}
+                        {hasTelemetry && (
+                          <div>
+                            <strong className="text-harbor-green">Telemetry Evidence:</strong>
+                            {ans.telemetry_evidence.map((ev, i) => (
+                              <div key={i} className="ml-4 mt-1 text-xs font-mono text-harbor-border">
+                                <div>Query: {ev.query_executed}</div>
+                                <div>Summary: {ev.summary}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {hasPolicy && (
+                          <div>
+                            <strong className="text-harbor-blue">Policy Citations:</strong>
+                            {ans.policy_citations.map((c, i) => (
+                              <div key={i} className="ml-4 mt-1 text-xs">
+                                <span className="text-harbor-border">{c.policy_document} — {c.section}</span>
+                                <div className="italic mt-0.5">"{c.excerpt?.substring(0, 200)}..."</div>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </td>
                     </tr>

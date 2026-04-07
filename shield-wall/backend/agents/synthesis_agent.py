@@ -36,7 +36,7 @@ async def synthesize_answers(questions: list[SecurityQuestion], telemetry: dict[
         }
         
         try:
-            completion = await openai_client.beta.chat.completions.parse(
+            completion = await openai_client.chat.completions.parse(
                 model=settings.gpt4o_model,
                 messages=[
                     {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},

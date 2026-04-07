@@ -14,7 +14,7 @@ settings = get_settings()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,18 +83,61 @@ async def get_result(job_id: str):
 async def export_job(job_id: str):
     if job_id not in orchestrator.jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-        
+
     job = orchestrator.jobs[job_id]
     if job.status != "complete":
         raise HTTPException(status_code=400, detail="Job not complete")
-        
-    # Mocking export for MVP
-    export_path = f"/tmp/shield_wall/{job_id}/answers.txt"
-    with open(export_path, "w") as f:
-        for ans in job.result.answers:
-            f.write(f"Q{ans.question_id}: {ans.answer_text}\n\n")
-            
-    return FileResponse(export_path, filename="completed_questionnaire.txt")
+
+    export_path = f"/tmp/shield_wall/{job_id}/completed_questionnaire.docx"
+
+    from docx import Document as DocxDocument
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = DocxDocument()
+    doc.add_heading("Shield-Wall — Completed Security Questionnaire", level=0)
+
+    summary = doc.add_paragraph()
+    summary.add_run(f"Total questions: {job.result.total_questions}  |  ")
+    summary.add_run(f"High confidence: {job.result.high_confidence}  |  ")
+    summary.add_run(f"Drift alerts: {job.result.drift_alerts}  |  ")
+    summary.add_run(f"Needs review: {job.result.needs_review}")
+    summary.paragraph_format.space_after = Pt(12)
+
+    for ans in job.result.answers:
+        q_text = ans.answer_text
+        # Find original question text from questionnaire
+        orig = ""
+        if job.questionnaire:
+            for sq in job.questionnaire.questions:
+                if sq.id == ans.question_id:
+                    orig = sq.original_text
+                    break
+
+        heading = doc.add_heading(f"Q{ans.question_id}", level=2)
+        if orig:
+            q_para = doc.add_paragraph()
+            q_run = q_para.add_run(orig)
+            q_run.italic = True
+            q_run.font.color.rgb = RGBColor(100, 100, 100)
+
+        a_para = doc.add_paragraph()
+        a_para.add_run(ans.answer_text)
+
+        conf_para = doc.add_paragraph()
+        conf_run = conf_para.add_run(f"Confidence: {ans.confidence.upper()}")
+        conf_run.bold = True
+        if ans.drift_detected:
+            drift_para = doc.add_paragraph()
+            drift_run = drift_para.add_run(f"DRIFT DETECTED: {ans.drift_detail}")
+            drift_run.font.color.rgb = RGBColor(220, 50, 50)
+
+    doc.save(export_path)
+    return FileResponse(
+        export_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="completed_questionnaire.docx"
+    )
 
 @app.post("/api/policies/reindex")
 async def reindex_policies():

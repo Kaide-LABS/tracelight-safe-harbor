@@ -136,16 +136,15 @@ Do NOT fabricate evidence. If no relevant data is found, say so.
 
 async def gather_telemetry(questions: list[SecurityQuestion], adapter: TelemetryAdapter, settings: ShieldWallSettings) -> list[TelemetryEvidence]:
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-    
-    tasks = []
-    for q in questions:
-        tasks.append(_process_single_question(q, adapter, settings, openai_client))
-        
-    # Run in parallel, limit concurrency if needed (using gather for now)
-    results = await asyncio.gather(*tasks)
-    
+    semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent requests
+
+    async def _bounded(q):
+        async with semaphore:
+            return await _process_single_question(q, adapter, settings, openai_client)
+
+    results = await asyncio.gather(*[_bounded(q) for q in questions])
+
     flattened = []
     for r in results:
         flattened.extend(r)
-        
     return flattened
