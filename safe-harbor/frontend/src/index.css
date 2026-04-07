@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .animate-flash-amber {
+    animation: flashAmber 0.3s ease-out;
+  }
+  .animate-flash-green {
+    animation: flashGreen 0.3s ease-out;
+  }
+}
+
+@keyframes flashAmber {
+  0% { background-color: #FBBF24; color: #000; }
+  100% { background-color: transparent; color: inherit; }
+}
+
+@keyframes flashGreen {
+  0% { background-color: #4ADE80; color: #000; }
+  100% { background-color: transparent; color: inherit; }
+}
