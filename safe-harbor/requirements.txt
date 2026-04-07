@@ -3,9 +3,11 @@ uvicorn[standard]==0.34.*
 python-multipart==0.0.18
 websockets==14.*
 openpyxl==3.1.*
+pandas==2.2.*
+numpy==2.1.*
 pydantic==2.10.*
 pydantic-settings==2.*
-openai==1.*
-google-genai==0.3.*
+openai==1.66.*
+google-genai==1.14.*
 python-dotenv==1.0.*
 aiofiles==24.*

@@ -7,8 +7,9 @@ import { useWebSocket } from './hooks/useWebSocket';
 
 function App() {
   const [jobId, setJobId] = useState(null);
-  const [appPhase, setAppPhase] = useState('UPLOAD'); // UPLOAD, TERMINAL, WATERFALL, VERDICT
-  
+  const [appPhase, setAppPhase] = useState('UPLOAD');
+  const [auditData, setAuditData] = useState(null);
+
   const { events, phase: wsPhase, lastEvent } = useWebSocket(jobId);
 
   useEffect(() => {
@@ -16,7 +17,12 @@ function App() {
 
     if (lastEvent?.event_type === 'complete') {
       setAppPhase('VERDICT');
-    } else if (wsPhase === 'generating' || wsPhase === 'validating' || wsPhase === 'write') {
+      // Fetch full job state from audit endpoint to get real schema data
+      fetch(`http://localhost:8000/api/audit/${jobId}`)
+        .then(res => res.json())
+        .then(data => setAuditData(data))
+        .catch(() => {});
+    } else if (wsPhase === 'generate' || wsPhase === 'validate' || wsPhase === 'write') {
       setAppPhase('WATERFALL');
     } else if (wsPhase === 'parse' || wsPhase === 'schema_extract') {
       setAppPhase('TERMINAL');
@@ -28,7 +34,7 @@ function App() {
       {appPhase === 'UPLOAD' && (
         <UploadZone onJobCreated={(id) => setJobId(id)} />
       )}
-      
+
       {appPhase === 'TERMINAL' && (
         <SchemaTerminal events={events.filter(e => e.phase === 'parse' || e.phase === 'schema_extract')} />
       )}
@@ -38,17 +44,15 @@ function App() {
       )}
 
       {appPhase === 'VERDICT' && lastEvent?.data && (
-        <VerdictBadge 
-          jobId={jobId} 
-          result={lastEvent.data} 
-          schema={events.find(e => e.phase === 'schema_extract' && e.detail.startsWith('[TYPE]')) ? 
-            {
-              model_type: events.find(e => e.phase === 'schema_extract' && e.detail.startsWith('[TYPE]')).detail.split(': ')[1],
-              industry: "General Corporate", // Mocked for UI
-              currency: "USD",
-              total_input_cells: events.filter(e => e.event_type === 'cell_update').length
-            } : {}
-          } 
+        <VerdictBadge
+          jobId={jobId}
+          result={lastEvent.data}
+          schema={auditData?.template_schema || {
+            model_type: 'unknown',
+            industry: 'General Corporate',
+            currency: 'USD',
+            total_input_cells: events.filter(e => e.event_type === 'cell_update').length
+          }}
         />
       )}
     </div>

@@ -27,7 +27,7 @@ RULES:
         system_prompt += f"\nCRITICAL CORRECTION: The previous generation failed validation.\n{retry_instructions}\nRegenerate ONLY the specified line items while keeping all other values identical."
 
     start_time = time.time()
-    completion = client.beta.chat.completions.parse(
+    completion = client.chat.completions.parse(
         model=settings.gpt4o_model,
         messages=[
             {"role": "system", "content": system_prompt},
