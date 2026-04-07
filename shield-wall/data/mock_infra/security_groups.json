@@ -1,0 +1,40 @@
+{
+    "security_groups": [
+        {
+            "GroupId": "sg-prod",
+            "GroupName": "prod-lb-sg",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}]
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-internal",
+            "GroupName": "internal-db-sg",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "IpRanges": [{"CidrIp": "10.0.0.0/16"}]
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-drift",
+            "GroupName": "drift-demo-sg",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8080,
+                    "ToPort": 8080,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}]
+                }
+            ]
+        }
+    ]
+}

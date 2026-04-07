@@ -1,0 +1,22 @@
+{
+    "password_policy": {
+        "MinimumPasswordLength": 14,
+        "RequireSymbols": true,
+        "RequireNumbers": true,
+        "RequireUppercaseCharacters": true,
+        "RequireLowercaseCharacters": true,
+        "AllowUsersToChangePassword": true,
+        "MaxPasswordAge": 90,
+        "PasswordReusePrevention": 24
+    },
+    "mfa_status": {
+        "users": [
+            {"UserName": "alice", "MFAEnabled": true},
+            {"UserName": "charlie", "MFAEnabled": true},
+            {"UserName": "bob", "MFAEnabled": false}
+        ]
+    },
+    "roles": [
+        {"RoleName": "Admin", "AssumeRolePolicyDocument": {}}
+    ]
+}

@@ -1,0 +1,18 @@
+{
+    "instances": [
+        {
+            "DBInstanceIdentifier": "prod-db-1",
+            "StorageEncrypted": true,
+            "MultiAZ": true,
+            "BackupRetentionPeriod": 35,
+            "PubliclyAccessible": false
+        },
+        {
+            "DBInstanceIdentifier": "staging-db-1",
+            "StorageEncrypted": true,
+            "MultiAZ": false,
+            "BackupRetentionPeriod": 7,
+            "PubliclyAccessible": false
+        }
+    ]
+}

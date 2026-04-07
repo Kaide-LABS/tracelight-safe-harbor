@@ -1,0 +1,12 @@
+[
+    {
+        "eventName": "ConsoleLogin",
+        "eventTime": "2023-10-01T10:00:00Z",
+        "userIdentity": {"userName": "alice", "mfaAuthenticated": "true"}
+    },
+    {
+        "eventName": "ConsoleLogin",
+        "eventTime": "2023-10-01T11:00:00Z",
+        "userIdentity": {"userName": "bob", "mfaAuthenticated": "false"}
+    }
+]

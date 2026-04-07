@@ -1,0 +1,12 @@
+{
+    "keys": [
+        {
+            "KeyId": "prod-key-1",
+            "KeySpec": "SYMMETRIC_DEFAULT",
+            "KeyUsage": "ENCRYPT_DECRYPT",
+            "KeyState": "Enabled",
+            "Description": "Production DB Key",
+            "KeyRotationEnabled": true
+        }
+    ]
+}
