@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 class ColumnConstraints(BaseModel):
     min_value: Optional[float] = None
     max_value: Optional[float] = None
-    growth_rate_range: Optional[tuple[float, float]] = None
+    growth_rate_range: Optional[List[float]] = None  # [min, max] e.g. [-0.1, 0.3]
     must_be_positive: bool = False
     must_be_negative: bool = False
     sum_equals: Optional[str] = None

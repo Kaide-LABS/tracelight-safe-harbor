@@ -34,12 +34,8 @@ def _enrich_questions(structured_questions: list[dict], batch: list[dict]) -> li
 
 
 def _try_gemini(batch: list[dict], settings: ShieldWallSettings) -> list[dict] | None:
-    """Attempt classification via Gemini 2.0 Flash. Retries up to 2 times."""
-    client = genai.Client(
-        vertexai=True,
-        project=settings.google_cloud_project,
-        location=settings.google_cloud_location,
-    )
+    """Attempt classification via Gemini. Retries up to 2 times."""
+    client = genai.Client(api_key=settings.gemini_api_key)
     for attempt in range(2):
         try:
             response = client.models.generate_content(
@@ -92,26 +88,34 @@ async def parse_questionnaire(
     file_ext: str,
     settings: ShieldWallSettings,
 ) -> ParsedQuestionnaire:
+    import asyncio
     batch = raw_questions[: settings.max_questions]
 
-    # Try Gemini first, then GPT-4o fallback
-    structured_questions = _try_gemini(batch, settings)
-    if structured_questions is None:
-        structured_questions = _fallback_gpt4o(batch, settings)
+    # Process in chunks of 30 concurrently to avoid Gemini truncating output
+    CHUNK_SIZE = 30
+    chunks = [batch[i:i + CHUNK_SIZE] for i in range(0, len(batch), CHUNK_SIZE)]
 
-    # Ultimate fallback: dumb passthrough
-    if structured_questions is None:
-        logger.warning("Both LLMs failed. Falling back to passthrough mapping.")
-        structured_questions = [
-            {
-                "category": "other",
-                "original_text": rq.get("text", ""),
-                "normalized_query": rq.get("text", ""),
-                "requires_telemetry": True,
-                "requires_policy": True,
-            }
-            for rq in batch
-        ]
+    async def _classify_chunk(chunk):
+        result = await asyncio.to_thread(_try_gemini, chunk, settings)
+        if result is None:
+            result = await asyncio.to_thread(_fallback_gpt4o, chunk, settings)
+        if result is None:
+            result = [
+                {
+                    "category": "other",
+                    "original_text": rq.get("text", ""),
+                    "normalized_query": rq.get("text", ""),
+                    "requires_telemetry": True,
+                    "requires_policy": True,
+                }
+                for rq in chunk
+            ]
+        return result
+
+    chunk_results = await asyncio.gather(*[_classify_chunk(c) for c in chunks])
+    structured_questions = []
+    for cr in chunk_results:
+        structured_questions.extend(cr)
 
     structured_questions = _enrich_questions(structured_questions, batch)
     final_questions = [SecurityQuestion(**sq) for sq in structured_questions]

@@ -83,12 +83,17 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     file_path = os.path.join(job_dir, files[0])
     
     async def ws_callback(event):
-        await websocket.send_text(event.model_dump_json())
-        
+        try:
+            await websocket.send_text(event.model_dump_json())
+        except Exception:
+            logger.warning(f"WebSocket send failed for job {job_id}")
+
     try:
         await orchestrator.run_pipeline(job_id, file_path, ws_callback)
     except WebSocketDisconnect:
         logger.info(f"Client disconnected for job {job_id}")
+    except Exception as e:
+        logger.error(f"Pipeline error for job {job_id}: {e}")
 
 @app.get("/api/result/{job_id}")
 async def get_result(job_id: str):

@@ -112,6 +112,16 @@ async def get_audit(job_id: str):
         
     return job.model_dump()
 
+@app.get("/api/preview/{filename}")
+async def preview_template(filename: str):
+    import os
+    file_path = f"templates/{filename}"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Template not found")
+    from backend.excel_io.parser import parse_template
+    parsed = parse_template(file_path)
+    return parsed
+
 @app.get("/api/costs/{job_id}")
 async def get_costs(job_id: str):
     if job_id not in orchestrator.jobs:

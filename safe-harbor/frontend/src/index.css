@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: #0D1117;
+  color: #E6EDF3;
+}
+
 @layer utilities {
   .animate-flash-amber {
     animation: flashAmber 0.3s ease-out;

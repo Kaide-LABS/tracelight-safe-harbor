@@ -64,9 +64,12 @@ class PipelineOrchestrator:
         self._update_status(job_id, "extracting_schema")
         await ws_callback(WSEvent(job_id=job_id, phase="schema_extract", event_type="progress", detail="Schema extraction starting..."))
         
-        schema = await extract_schema(parsed, self.settings)
+        async def schema_progress(msg):
+            await ws_callback(WSEvent(job_id=job_id, phase="schema_extract", event_type="progress", detail=msg))
+
+        schema = await extract_schema(parsed, self.settings, on_progress=schema_progress)
         self.jobs[job_id].template_schema = schema
-        self._log_audit(job_id, "schema_extract", "Schema extracted successfully", agent="Gemini 2.0 Flash")
+        self._log_audit(job_id, "schema_extract", "Schema extracted successfully", agent=self.settings.gemini_model)
         
         cost_entry = cost_tracker.log_cost("schema_extractor", self.settings.gemini_model, {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500})
         self.jobs[job_id].cost_entries.append(cost_entry)
@@ -81,11 +84,11 @@ class PipelineOrchestrator:
         
         for attempt in range(self.settings.max_retries):
             # Generate
-            payload = await generate_synthetic_data(schema, self.settings, retry_instructions)
+            payload = await generate_synthetic_data(schema, self.settings, retry_instructions, parsed_template=parsed)
             self.jobs[job_id].synthetic_payload = payload
-            self._log_audit(job_id, "generate", f"Generated synthetic payload (attempt {attempt+1})", agent="GPT-4o")
-            
-            gen_cost = cost_tracker.log_cost("synthetic_gen", self.settings.gpt4o_model, payload.generation_metadata.token_usage)
+            self._log_audit(job_id, "generate", f"Generated synthetic payload (attempt {attempt+1})", agent=self.settings.gemini_model)
+
+            gen_cost = cost_tracker.log_cost("synthetic_gen", self.settings.gemini_model, payload.generation_metadata.token_usage)
             self.jobs[job_id].cost_entries.append(gen_cost)
             
             for cell in payload.cells:

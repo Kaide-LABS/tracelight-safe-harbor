@@ -3,13 +3,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ShieldWallSettings(BaseSettings):
     openai_api_key: str = "sk-mock-key"
+    gemini_api_key: str = ""
     google_cloud_project: str = "tracelight-demo"
     google_cloud_location: str = "us-central1"
     max_file_size_mb: int = 50
     max_questions: int = 500
-    generation_timeout_s: int = 300
+    generation_timeout_s: int = 900
     gpt4o_model: str = "gpt-4o"
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-3-flash-preview"
     demo_mode: bool = True
     
     aws_region: str = "eu-west-1"

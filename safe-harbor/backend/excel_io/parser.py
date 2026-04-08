@@ -35,14 +35,25 @@ def parse_template(file_path: str) -> dict:
         }
 
         period_headers = []
+        header_row = 1
         for col in range(2, ws.max_column + 1):
-            val = ws.cell(row=1, column=col).value or ws.cell(row=2, column=col).value
+            val = ws.cell(row=1, column=col).value
             if val and year_pattern.search(str(val)):
                 period_headers.append({"col": col, "val": str(val).strip()})
                 if str(val).strip() not in sheet_data["temporal_headers"]:
                     sheet_data["temporal_headers"].append(str(val).strip())
+        # If no periods found in row 1, try row 2
+        if not period_headers:
+            header_row = 2
+            for col in range(2, ws.max_column + 1):
+                val = ws.cell(row=2, column=col).value
+                if val and year_pattern.search(str(val)):
+                    period_headers.append({"col": col, "val": str(val).strip()})
+                    if str(val).strip() not in sheet_data["temporal_headers"]:
+                        sheet_data["temporal_headers"].append(str(val).strip())
 
-        for row in range(2, ws.max_row + 1):
+        data_start_row = header_row + 1
+        for row in range(data_start_row, ws.max_row + 1):
             line_item_val = ws.cell(row=row, column=1).value
             if not line_item_val:
                 continue
@@ -79,15 +90,19 @@ def parse_template(file_path: str) -> dict:
 
         result["sheets"].append(sheet_data)
 
-    if total_input > 0 and (populated_input / total_input) > 0.05:
+    if total_input > 0 and (populated_input / total_input) > 0.15:
         raise TemplateNotEmptyError("File contains too much data in input cells. Upload an empty template.")
 
     result["total_input_cells"] = total_input
 
-    for name in wb.defined_names.definedName:
-        result["named_ranges"].append({
-            "name": name.name,
-            "cell_range": name.attr_text
-        })
+    # openpyxl 3.1+ uses DefinedNameDict which is directly iterable
+    try:
+        for name in wb.defined_names.values():
+            result["named_ranges"].append({
+                "name": name.name,
+                "cell_range": name.attr_text
+            })
+    except Exception:
+        pass  # No named ranges or incompatible API — not critical
 
     return result

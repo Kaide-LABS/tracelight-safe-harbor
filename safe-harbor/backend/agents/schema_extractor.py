@@ -1,5 +1,7 @@
 import json
 import logging
+import asyncio
+import functools
 from google import genai
 from google.genai import types
 from openai import OpenAI
@@ -47,26 +49,26 @@ def _enrich_schema_with_cell_refs(schema: TemplateSchema, parsed_template: dict)
 
 
 async def _try_gemini(parsed_template: dict, settings: Settings) -> TemplateSchema:
-    """Attempt schema extraction via Gemini 2.0 Flash. Retries up to 2 times."""
-    client = genai.Client(
-        vertexai=True,
-        project=settings.google_cloud_project,
-        location=settings.google_cloud_location,
-    )
+    """Attempt schema extraction via Gemini 2.0 Flash. Single attempt with 30s timeout."""
+    client = genai.Client(api_key=settings.gemini_api_key)
     schema_json = TemplateSchema.model_json_schema()
     contents = f"{SYSTEM_PROMPT}\n\nRequired Schema:\n{json.dumps(schema_json)}\n\nTemplate Structure:\n{json.dumps(parsed_template)}"
 
     last_error = None
-    for attempt in range(2):
+    for attempt in range(1):
         try:
-            response = client.models.generate_content(
-                model=settings.gemini_model,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    top_p=0.9,
-                    response_mime_type="application/json"
-                ),
+            response = await asyncio.to_thread(
+                functools.partial(
+                    client.models.generate_content,
+                    model=settings.gemini_model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        temperature=1.0,
+                        max_output_tokens=65536,
+                        thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                        response_mime_type="application/json",
+                    ),
+                )
             )
             raw_text = response.text
             if raw_text.startswith("```json"):
@@ -84,13 +86,16 @@ async def _fallback_gpt4o(parsed_template: dict, settings: Settings) -> Template
     logger.info("Falling back to GPT-4o for schema extraction")
     client = OpenAI(api_key=settings.openai_api_key)
     schema_json = TemplateSchema.model_json_schema()
-    completion = client.chat.completions.parse(
-        model=settings.gpt4o_model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Required Schema:\n{json.dumps(schema_json)}\n\nTemplate Structure:\n{json.dumps(parsed_template)}"},
-        ],
-        response_format=TemplateSchema,
+    completion = await asyncio.to_thread(
+        functools.partial(
+            client.beta.chat.completions.parse,
+            model=settings.gpt4o_model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Required Schema:\n{json.dumps(schema_json)}\n\nTemplate Structure:\n{json.dumps(parsed_template)}"},
+            ],
+            response_format=TemplateSchema,
+        )
     )
     result = completion.choices[0].message.parsed
     if result is None:
@@ -98,11 +103,20 @@ async def _fallback_gpt4o(parsed_template: dict, settings: Settings) -> Template
     return result
 
 
-async def extract_schema(parsed_template: dict, settings: Settings) -> TemplateSchema:
+async def extract_schema(parsed_template: dict, settings: Settings, on_progress=None) -> TemplateSchema:
+    async def _report(msg):
+        if on_progress:
+            await on_progress(msg)
+
+    await _report("Attempting Gemini 3 Flash...")
     try:
-        schema = await _try_gemini(parsed_template, settings)
-    except Exception as e:
-        logger.warning(f"Gemini exhausted, falling back to GPT-4o: {e}")
+        schema = await asyncio.wait_for(_try_gemini(parsed_template, settings), timeout=45)
+        await _report("Gemini schema extraction succeeded")
+    except (asyncio.TimeoutError, Exception) as e:
+        reason = "timed out" if isinstance(e, asyncio.TimeoutError) else str(e)
+        logger.warning(f"Gemini failed, falling back to GPT-4o: {reason}")
+        await _report(f"Gemini failed ({reason}), falling back to GPT-4o...")
         schema = await _fallback_gpt4o(parsed_template, settings)
+        await _report("GPT-4o schema extraction succeeded")
 
     return _enrich_schema_with_cell_refs(schema, parsed_template)
