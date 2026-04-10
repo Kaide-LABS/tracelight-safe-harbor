@@ -3,38 +3,85 @@
         {
             "GroupId": "sg-prod",
             "GroupName": "prod-lb-sg",
+            "Description": "Production ALB - HTTPS only",
+            "VpcId": "vpc-prod-001",
             "IpPermissions": [
-                {
-                    "IpProtocol": "tcp",
-                    "FromPort": 443,
-                    "ToPort": 443,
-                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}]
-                }
-            ]
+                {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "Public HTTPS access via ALB"}]}
+            ],
+            "IpPermissionsEgress": [
+                {"IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "UserIdGroupPairs": [{"GroupId": "sg-app", "Description": "To application tier"}]}
+            ],
+            "Tags": [{"Key": "Environment", "Value": "production"}, {"Key": "ManagedBy", "Value": "Terraform"}]
+        },
+        {
+            "GroupId": "sg-app",
+            "GroupName": "prod-app-sg",
+            "Description": "Production application tier",
+            "VpcId": "vpc-prod-001",
+            "IpPermissions": [
+                {"IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "UserIdGroupPairs": [{"GroupId": "sg-prod", "Description": "From ALB only"}]}
+            ],
+            "IpPermissionsEgress": [
+                {"IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432, "UserIdGroupPairs": [{"GroupId": "sg-internal", "Description": "To database tier (PostgreSQL)"}]},
+                {"IpProtocol": "tcp", "FromPort": 6379, "ToPort": 6379, "UserIdGroupPairs": [{"GroupId": "sg-redis", "Description": "To Redis cache"}]},
+                {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "HTTPS to external APIs"}]}
+            ],
+            "Tags": [{"Key": "Environment", "Value": "production"}, {"Key": "Tier", "Value": "application"}]
         },
         {
             "GroupId": "sg-internal",
-            "GroupName": "internal-db-sg",
+            "GroupName": "prod-db-sg",
+            "Description": "Production database tier - internal only",
+            "VpcId": "vpc-prod-001",
             "IpPermissions": [
-                {
-                    "IpProtocol": "tcp",
-                    "FromPort": 5432,
-                    "ToPort": 5432,
-                    "IpRanges": [{"CidrIp": "10.0.0.0/16"}]
-                }
-            ]
+                {"IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432, "UserIdGroupPairs": [{"GroupId": "sg-app", "Description": "From application tier only"}]}
+            ],
+            "IpPermissionsEgress": [],
+            "Tags": [{"Key": "Environment", "Value": "production"}, {"Key": "Tier", "Value": "database"}, {"Key": "NoInternetAccess", "Value": "true"}]
+        },
+        {
+            "GroupId": "sg-redis",
+            "GroupName": "prod-redis-sg",
+            "Description": "Production Redis cache",
+            "VpcId": "vpc-prod-001",
+            "IpPermissions": [
+                {"IpProtocol": "tcp", "FromPort": 6379, "ToPort": 6379, "UserIdGroupPairs": [{"GroupId": "sg-app", "Description": "From application tier only"}]}
+            ],
+            "Tags": [{"Key": "Environment", "Value": "production"}]
         },
         {
             "GroupId": "sg-drift",
             "GroupName": "drift-demo-sg",
+            "Description": "DRIFT DEMO - intentionally overly permissive for drift detection demo",
+            "VpcId": "vpc-prod-001",
             "IpPermissions": [
-                {
-                    "IpProtocol": "tcp",
-                    "FromPort": 8080,
-                    "ToPort": 8080,
-                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}]
-                }
-            ]
+                {"IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "WARNING: Public access on non-443 port"}]}
+            ],
+            "Tags": [{"Key": "Environment", "Value": "production"}, {"Key": "DriftDemo", "Value": "true"}]
         }
+    ],
+    "vpc_flow_logs": {
+        "FlowLogId": "fl-prod-001",
+        "ResourceId": "vpc-prod-001",
+        "TrafficType": "ALL",
+        "LogDestination": "arn:aws:s3:::tracelight-vpc-flow-logs",
+        "LogFormat": "${version} ${account-id} ${interface-id} ${srcaddr} ${dstaddr} ${srcport} ${dstport} ${protocol} ${packets} ${bytes} ${start} ${end} ${action} ${log-status}",
+        "MaxAggregationInterval": 60,
+        "Tags": [{"Key": "ManagedBy", "Value": "Terraform"}]
+    },
+    "nacls": [
+        {
+            "NetworkAclId": "acl-prod-public",
+            "VpcId": "vpc-prod-001",
+            "Entries": [
+                {"RuleNumber": 100, "Protocol": "6", "PortRange": {"From": 443, "To": 443}, "CidrBlock": "0.0.0.0/0", "RuleAction": "allow", "Egress": false},
+                {"RuleNumber": 200, "Protocol": "6", "PortRange": {"From": 1024, "To": 65535}, "CidrBlock": "0.0.0.0/0", "RuleAction": "allow", "Egress": false},
+                {"RuleNumber": 32767, "Protocol": "-1", "CidrBlock": "0.0.0.0/0", "RuleAction": "deny", "Egress": false}
+            ],
+            "Tags": [{"Key": "Tier", "Value": "public"}]
+        }
+    ],
+    "public_endpoints": [
+        {"Type": "ALB", "DNSName": "prod-alb-123456.eu-west-1.elb.amazonaws.com", "Scheme": "internet-facing", "Port": 443, "Protocol": "HTTPS", "WAFEnabled": true, "ShieldAdvanced": true, "SSLPolicy": "ELBSecurityPolicy-TLS13-1-2-2021-06"}
     ]
 }

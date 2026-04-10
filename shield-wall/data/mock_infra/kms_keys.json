@@ -2,11 +2,59 @@
     "keys": [
         {
             "KeyId": "prod-key-1",
+            "Arn": "arn:aws:kms:eu-west-1:123456789012:key/prod-key-1",
             "KeySpec": "SYMMETRIC_DEFAULT",
             "KeyUsage": "ENCRYPT_DECRYPT",
             "KeyState": "Enabled",
-            "Description": "Production DB Key",
-            "KeyRotationEnabled": true
+            "Description": "Production database encryption key (RDS, DynamoDB)",
+            "KeyRotationEnabled": true,
+            "CreationDate": "2023-01-15T00:00:00Z",
+            "KeyManager": "CUSTOMER",
+            "EncryptionAlgorithms": ["SYMMETRIC_DEFAULT"],
+            "MultiRegion": false,
+            "Tags": [{"TagKey": "Environment", "TagValue": "production"}, {"TagKey": "ManagedBy", "TagValue": "Terraform"}]
+        },
+        {
+            "KeyId": "prod-s3-key",
+            "Arn": "arn:aws:kms:eu-west-1:123456789012:key/prod-s3-key",
+            "KeySpec": "SYMMETRIC_DEFAULT",
+            "KeyUsage": "ENCRYPT_DECRYPT",
+            "KeyState": "Enabled",
+            "Description": "Production S3 bucket encryption key",
+            "KeyRotationEnabled": true,
+            "CreationDate": "2023-01-15T00:00:00Z",
+            "KeyManager": "CUSTOMER",
+            "Tags": [{"TagKey": "Environment", "TagValue": "production"}]
+        },
+        {
+            "KeyId": "prod-ebs-key",
+            "Arn": "arn:aws:kms:eu-west-1:123456789012:key/prod-ebs-key",
+            "KeySpec": "SYMMETRIC_DEFAULT",
+            "KeyUsage": "ENCRYPT_DECRYPT",
+            "KeyState": "Enabled",
+            "Description": "Production EBS volume encryption key",
+            "KeyRotationEnabled": true,
+            "CreationDate": "2023-06-01T00:00:00Z",
+            "KeyManager": "CUSTOMER",
+            "Tags": [{"TagKey": "Environment", "TagValue": "production"}]
+        },
+        {
+            "KeyId": "cloudtrail-log-key",
+            "Arn": "arn:aws:kms:eu-west-1:123456789012:key/cloudtrail-log-key",
+            "KeySpec": "SYMMETRIC_DEFAULT",
+            "KeyUsage": "ENCRYPT_DECRYPT",
+            "KeyState": "Enabled",
+            "Description": "CloudTrail log encryption key",
+            "KeyRotationEnabled": true,
+            "CreationDate": "2023-01-10T00:00:00Z",
+            "KeyManager": "CUSTOMER",
+            "Tags": [{"TagKey": "Service", "TagValue": "CloudTrail"}]
         }
+    ],
+    "aliases": [
+        {"AliasName": "alias/prod-db", "TargetKeyId": "prod-key-1"},
+        {"AliasName": "alias/prod-s3", "TargetKeyId": "prod-s3-key"},
+        {"AliasName": "alias/prod-ebs", "TargetKeyId": "prod-ebs-key"},
+        {"AliasName": "alias/cloudtrail-logs", "TargetKeyId": "cloudtrail-log-key"}
     ]
 }

@@ -12,6 +12,7 @@ from backend.excel_io.writer import write_synthetic_data
 from backend.agents.schema_extractor import extract_schema
 from backend.agents.synthetic_gen import generate_synthetic_data
 from backend.agents.validator import DeterministicValidator
+from backend.agents.post_processor import post_process
 from backend.middleware import cost_tracker
 
 logger = logging.getLogger(__name__)
@@ -69,9 +70,9 @@ class PipelineOrchestrator:
 
         schema = await extract_schema(parsed, self.settings, on_progress=schema_progress)
         self.jobs[job_id].template_schema = schema
-        self._log_audit(job_id, "schema_extract", "Schema extracted successfully", agent=self.settings.gemini_model)
-        
-        cost_entry = cost_tracker.log_cost("schema_extractor", self.settings.gemini_model, {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500})
+        self._log_audit(job_id, "schema_extract", "Schema extracted successfully", agent=self.settings.gemini_fast_model)
+
+        cost_entry = cost_tracker.log_cost("schema_extractor", self.settings.gemini_fast_model, {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500})
         self.jobs[job_id].cost_entries.append(cost_entry)
         
         await ws_callback(WSEvent(job_id=job_id, phase="schema_extract", event_type="progress", detail=f"[TYPE] Model classified as: {schema.model_type}"))
@@ -84,7 +85,15 @@ class PipelineOrchestrator:
         
         for attempt in range(self.settings.max_retries):
             # Generate
+            await ws_callback(WSEvent(job_id=job_id, phase="generate", event_type="progress", detail="Synthetic generation starting (sheet-by-sheet)..."))
             payload = await generate_synthetic_data(schema, self.settings, retry_instructions, parsed_template=parsed)
+
+            # Post-process: fix rolling balances, sign conventions, zero fills
+            raw_cells = [c.model_dump() for c in payload.cells]
+            fixed_cells = post_process(raw_cells, parsed)
+            from backend.models.schemas import CellValue
+            payload.cells = [CellValue(**c) for c in fixed_cells]
+
             self.jobs[job_id].synthetic_payload = payload
             self._log_audit(job_id, "generate", f"Generated synthetic payload (attempt {attempt+1})", agent=self.settings.gemini_model)
 

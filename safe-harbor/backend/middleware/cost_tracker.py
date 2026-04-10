@@ -3,7 +3,8 @@ from datetime import datetime
 
 MODEL_PRICING = {
     "gpt-4o": {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
-    "gemini-3-flash-preview": {"input": 0.50 / 1_000_000, "output": 3.00 / 1_000_000},
+    "gemini-3.1-pro-preview": {"input": 2.00 / 1_000_000, "output": 12.00 / 1_000_000},
+    "gemini-3-flash-preview": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
     "text-embedding-3-small": {"input": 0.02 / 1_000_000, "output": 0.0},
 }
 

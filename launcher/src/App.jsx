@@ -46,7 +46,7 @@ function App() {
               Upload empty Excel templates and generate financially coherent synthetic data. Balance sheets balance, cash flows reconcile, margins stay realistic. Zero sensitive data exposure.
             </p>
             <div className="flex items-center gap-3 text-xs text-[#E6EDF3]/20 mb-6">
-              <span className="bg-[#0D1117] px-2 py-1 rounded">Gemini 3 Flash</span>
+              <span className="bg-[#0D1117] px-2 py-1 rounded">Gemini</span>
               <span className="bg-[#0D1117] px-2 py-1 rounded">GPT-4o</span>
               <span className="bg-[#0D1117] px-2 py-1 rounded">6 Validation Rules</span>
             </div>
@@ -69,7 +69,7 @@ function App() {
               Upload vendor security questionnaires and get AI-generated answers backed by live infrastructure telemetry and policy documents. Drift detection flags real compliance gaps.
             </p>
             <div className="flex items-center gap-3 text-xs text-[#E6EDF3]/20 mb-6">
-              <span className="bg-[#0D1117] px-2 py-1 rounded">Gemini + GPT-4o</span>
+              <span className="bg-[#0D1117] px-2 py-1 rounded">Gemini</span>
               <span className="bg-[#0D1117] px-2 py-1 rounded">ChromaDB RAG</span>
               <span className="bg-[#0D1117] px-2 py-1 rounded">5 Drift Checks</span>
             </div>

@@ -1,12 +1,17 @@
 [
-    {
-        "eventName": "ConsoleLogin",
-        "eventTime": "2023-10-01T10:00:00Z",
-        "userIdentity": {"userName": "alice", "mfaAuthenticated": "true"}
-    },
-    {
-        "eventName": "ConsoleLogin",
-        "eventTime": "2023-10-01T11:00:00Z",
-        "userIdentity": {"userName": "bob", "mfaAuthenticated": "false"}
-    }
+    {"eventName": "ConsoleLogin", "eventTime": "2025-04-08T09:15:00Z", "userIdentity": {"userName": "alice.chen", "mfaAuthenticated": "true", "arn": "arn:aws:iam::123456789012:user/alice.chen"}, "sourceIPAddress": "10.0.1.50", "awsRegion": "eu-west-1", "responseElements": {"ConsoleLogin": "Success"}},
+    {"eventName": "ConsoleLogin", "eventTime": "2025-04-08T09:22:00Z", "userIdentity": {"userName": "bob.kumar", "mfaAuthenticated": "true", "arn": "arn:aws:iam::123456789012:user/bob.kumar"}, "sourceIPAddress": "10.0.1.51", "awsRegion": "eu-west-1", "responseElements": {"ConsoleLogin": "Success"}},
+    {"eventName": "ConsoleLogin", "eventTime": "2025-04-08T08:45:00Z", "userIdentity": {"userName": "carol.jones", "mfaAuthenticated": "true", "arn": "arn:aws:iam::123456789012:user/carol.jones"}, "sourceIPAddress": "10.0.1.52", "awsRegion": "eu-west-1", "responseElements": {"ConsoleLogin": "Success"}},
+    {"eventName": "ConsoleLogin", "eventTime": "2025-04-07T14:30:00Z", "userIdentity": {"userName": "dave.ops", "mfaAuthenticated": "false", "arn": "arn:aws:iam::123456789012:user/dave.ops"}, "sourceIPAddress": "203.0.113.50", "awsRegion": "eu-west-1", "responseElements": {"ConsoleLogin": "Failure"}, "errorMessage": "MFA required but not provided"},
+    {"eventName": "AssumeRole", "eventTime": "2025-04-08T09:16:00Z", "userIdentity": {"userName": "alice.chen"}, "requestParameters": {"roleArn": "arn:aws:iam::123456789012:role/PlatformEngineer", "roleSessionName": "alice-session"}, "responseElements": {"credentials": {"expiration": "2025-04-08T10:16:00Z"}}},
+    {"eventName": "CreateUser", "eventTime": "2025-04-07T11:00:00Z", "userIdentity": {"userName": "admin-jit-alice", "sessionContext": {"sessionIssuer": {"userName": "JITAdminRole"}}}, "requestParameters": {"userName": "new.contractor"}, "sourceIPAddress": "10.0.1.50"},
+    {"eventName": "PutBucketEncryption", "eventTime": "2025-04-06T16:00:00Z", "userIdentity": {"userName": "terraform-ci"}, "requestParameters": {"bucketName": "tracelight-prod-data", "serverSideEncryptionConfiguration": {"rules": [{"applyServerSideEncryptionByDefault": {"sseAlgorithm": "aws:kms", "kmsMasterKeyID": "arn:aws:kms:eu-west-1:123456789012:key/prod-key-1"}}]}}},
+    {"eventName": "AuthorizeSecurityGroupIngress", "eventTime": "2025-04-05T10:00:00Z", "userIdentity": {"userName": "terraform-ci"}, "requestParameters": {"groupId": "sg-prod", "ipPermissions": {"items": [{"ipProtocol": "tcp", "fromPort": 443, "toPort": 443, "ipRanges": {"items": [{"cidrIp": "0.0.0.0/0"}]}}]}}},
+    {"eventName": "EnableKeyRotation", "eventTime": "2025-03-15T09:00:00Z", "userIdentity": {"userName": "security-admin"}, "requestParameters": {"keyId": "prod-key-1"}},
+    {"eventName": "StopLogging", "eventTime": "2025-04-08T03:00:00Z", "userIdentity": {"userName": "guardduty-test"}, "errorMessage": "Access Denied", "errorCode": "AccessDeniedException"},
+    {"eventName": "DeleteBucketPolicy", "eventTime": "2025-04-07T22:00:00Z", "userIdentity": {"userName": "guardduty-test"}, "errorMessage": "Access Denied", "errorCode": "AccessDeniedException"},
+    {"eventName": "ModifyDBInstance", "eventTime": "2025-04-01T14:00:00Z", "userIdentity": {"userName": "terraform-ci"}, "requestParameters": {"dBInstanceIdentifier": "prod-db-1", "backupRetentionPeriod": 35, "multiAZ": true}},
+    {"eventName": "PutBucketVersioning", "eventTime": "2025-03-20T10:00:00Z", "userIdentity": {"userName": "terraform-ci"}, "requestParameters": {"bucketName": "tracelight-cloudtrail-logs", "versioningConfiguration": {"status": "Enabled"}}},
+    {"eventName": "PutObjectLockConfiguration", "eventTime": "2025-03-20T10:01:00Z", "userIdentity": {"userName": "terraform-ci"}, "requestParameters": {"bucketName": "tracelight-cloudtrail-logs", "objectLockConfiguration": {"objectLockEnabled": "Enabled", "rule": {"defaultRetention": {"mode": "COMPLIANCE", "days": 2555}}}}},
+    {"eventName": "UpdateTrail", "eventTime": "2025-01-10T09:00:00Z", "userIdentity": {"userName": "security-admin"}, "requestParameters": {"name": "tracelight-trail", "isMultiRegionTrail": true, "enableLogFileValidation": true, "s3BucketName": "tracelight-cloudtrail-logs"}}
 ]

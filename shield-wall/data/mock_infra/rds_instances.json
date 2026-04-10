@@ -2,17 +2,64 @@
     "instances": [
         {
             "DBInstanceIdentifier": "prod-db-1",
+            "DBInstanceClass": "db.r6g.xlarge",
+            "Engine": "postgres",
+            "EngineVersion": "15.4",
             "StorageEncrypted": true,
+            "KmsKeyId": "arn:aws:kms:eu-west-1:123456789012:key/prod-key-1",
             "MultiAZ": true,
             "BackupRetentionPeriod": 35,
-            "PubliclyAccessible": false
+            "PubliclyAccessible": false,
+            "AutoMinorVersionUpgrade": true,
+            "DeletionProtection": true,
+            "StorageType": "gp3",
+            "AllocatedStorage": 500,
+            "IAMDatabaseAuthenticationEnabled": true,
+            "PerformanceInsightsEnabled": true,
+            "PerformanceInsightsKMSKeyId": "arn:aws:kms:eu-west-1:123456789012:key/prod-key-1",
+            "MonitoringInterval": 60,
+            "EnabledCloudwatchLogsExports": ["postgresql", "upgrade"],
+            "CACertificateIdentifier": "rds-ca-rsa2048-g1",
+            "DBSubnetGroup": "prod-db-subnet-group",
+            "VpcSecurityGroups": [{"VpcSecurityGroupId": "sg-internal", "Status": "active"}],
+            "Endpoint": {"Address": "prod-db-1.cluster-abc123.eu-west-1.rds.amazonaws.com", "Port": 5432},
+            "ReadReplicaDBInstanceIdentifiers": ["prod-db-1-read-replica"],
+            "LatestRestorableTime": "2025-04-08T09:00:00Z",
+            "DBInstanceStatus": "available"
+        },
+        {
+            "DBInstanceIdentifier": "prod-db-1-read-replica",
+            "DBInstanceClass": "db.r6g.large",
+            "Engine": "postgres",
+            "EngineVersion": "15.4",
+            "StorageEncrypted": true,
+            "KmsKeyId": "arn:aws:kms:eu-west-1:123456789012:key/prod-key-1",
+            "MultiAZ": false,
+            "PubliclyAccessible": false,
+            "AvailabilityZone": "eu-central-1a",
+            "DBInstanceStatus": "available",
+            "ReadReplicaSourceDBInstanceIdentifier": "prod-db-1",
+            "StatusInfos": [{"StatusType": "read replication", "Normal": true, "Status": "replicating"}]
         },
         {
             "DBInstanceIdentifier": "staging-db-1",
+            "DBInstanceClass": "db.t4g.medium",
+            "Engine": "postgres",
+            "EngineVersion": "15.4",
             "StorageEncrypted": true,
             "MultiAZ": false,
             "BackupRetentionPeriod": 7,
-            "PubliclyAccessible": false
+            "PubliclyAccessible": false,
+            "DBInstanceStatus": "available"
         }
+    ],
+    "s3_buckets": [
+        {"BucketName": "tracelight-prod-data", "Encryption": {"SSEAlgorithm": "aws:kms", "KMSMasterKeyID": "prod-s3-key"}, "Versioning": "Enabled", "PublicAccessBlock": {"BlockPublicAcls": true, "IgnorePublicAcls": true, "BlockPublicPolicy": true, "RestrictPublicBuckets": true}, "Logging": {"TargetBucket": "tracelight-access-logs"}},
+        {"BucketName": "tracelight-cloudtrail-logs", "Encryption": {"SSEAlgorithm": "aws:kms", "KMSMasterKeyID": "cloudtrail-log-key"}, "Versioning": "Enabled", "ObjectLock": {"ObjectLockEnabled": "Enabled", "Rule": {"DefaultRetention": {"Mode": "COMPLIANCE", "Days": 2555}}}, "LifecycleRules": [{"ID": "archive-to-glacier", "Status": "Enabled", "Transitions": [{"Days": 90, "StorageClass": "GLACIER"}]}]},
+        {"BucketName": "tracelight-backups", "Encryption": {"SSEAlgorithm": "aws:kms", "KMSMasterKeyID": "prod-s3-key"}, "Versioning": "Enabled", "ReplicationConfiguration": {"Role": "arn:aws:iam::123456789012:role/s3-replication", "Rules": [{"Destination": {"Bucket": "arn:aws:s3:::tracelight-backups-dr-eu-central-1"}, "Status": "Enabled"}]}}
+    ],
+    "ebs_volumes": [
+        {"VolumeId": "vol-prod-001", "Encrypted": true, "KmsKeyId": "arn:aws:kms:eu-west-1:123456789012:key/prod-ebs-key", "State": "in-use", "Size": 100, "VolumeType": "gp3"},
+        {"VolumeId": "vol-prod-002", "Encrypted": true, "KmsKeyId": "arn:aws:kms:eu-west-1:123456789012:key/prod-ebs-key", "State": "in-use", "Size": 200, "VolumeType": "gp3"}
     ]
 }

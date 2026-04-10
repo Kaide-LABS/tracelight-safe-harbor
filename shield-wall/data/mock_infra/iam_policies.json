@@ -7,16 +7,40 @@
         "RequireLowercaseCharacters": true,
         "AllowUsersToChangePassword": true,
         "MaxPasswordAge": 90,
-        "PasswordReusePrevention": 24
+        "PasswordReusePrevention": 24,
+        "HardExpiry": false
     },
     "mfa_status": {
         "users": [
-            {"UserName": "alice", "MFAEnabled": true},
-            {"UserName": "charlie", "MFAEnabled": true},
-            {"UserName": "bob", "MFAEnabled": false}
-        ]
+            {"UserName": "alice.chen", "MFAEnabled": true, "MFADevices": [{"SerialNumber": "arn:aws:iam::123456789012:mfa/alice-yubikey", "EnableDate": "2024-06-01T00:00:00Z"}]},
+            {"UserName": "bob.kumar", "MFAEnabled": true, "MFADevices": [{"SerialNumber": "arn:aws:iam::123456789012:mfa/bob-yubikey", "EnableDate": "2024-07-15T00:00:00Z"}]},
+            {"UserName": "carol.jones", "MFAEnabled": true, "MFADevices": [{"SerialNumber": "arn:aws:iam::123456789012:mfa/carol-totp", "EnableDate": "2024-08-01T00:00:00Z"}]},
+            {"UserName": "dave.ops", "MFAEnabled": false, "MFADevices": [], "Tags": [{"Key": "Status", "Value": "PendingMFAEnrollment"}, {"Key": "Deadline", "Value": "2025-04-15"}]},
+            {"UserName": "terraform-ci", "MFAEnabled": false, "Tags": [{"Key": "AccountType", "Value": "ServiceAccount"}, {"Key": "AuthMethod", "Value": "AssumeRole-OIDC"}]}
+        ],
+        "summary": {
+            "total_users": 5,
+            "mfa_enabled": 3,
+            "mfa_disabled": 2,
+            "service_accounts": 1,
+            "human_users_without_mfa": 1
+        }
     },
     "roles": [
-        {"RoleName": "Admin", "AssumeRolePolicyDocument": {}}
+        {"RoleName": "PlatformEngineer", "Description": "Production read-write for platform team", "MaxSessionDuration": 3600, "AssumeRolePolicyDocument": {"Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": "sts:AssumeRole", "Condition": {"Bool": {"aws:MultiFactorAuthPresent": "true"}}}]}},
+        {"RoleName": "DeveloperReadOnly", "Description": "Read-only access to staging and prod logs", "MaxSessionDuration": 3600, "AssumeRolePolicyDocument": {"Statement": [{"Effect": "Allow", "Principal": {"Federated": "arn:aws:iam::123456789012:saml-provider/Okta"}, "Action": "sts:AssumeRoleWithSAML", "Condition": {"StringEquals": {"SAML:aud": "https://signin.aws.amazon.com/saml"}}}]}},
+        {"RoleName": "JITAdminRole", "Description": "Just-in-time privileged access, 4-hour max", "MaxSessionDuration": 14400, "AssumeRolePolicyDocument": {"Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": "sts:AssumeRole", "Condition": {"Bool": {"aws:MultiFactorAuthPresent": "true"}, "StringEquals": {"aws:RequestedRegion": "eu-west-1"}}}]}},
+        {"RoleName": "SecurityAuditor", "Description": "Read-only access to CloudTrail, Config, GuardDuty", "MaxSessionDuration": 3600},
+        {"RoleName": "DatabaseAdmin", "Description": "RDS management, requires explicit approval", "MaxSessionDuration": 3600}
+    ],
+    "users": [
+        {"UserName": "alice.chen", "Groups": ["PlatformEngineering"], "Tags": [{"Key": "Department", "Value": "Engineering"}, {"Key": "Title", "Value": "Senior Platform Engineer"}], "CreateDate": "2023-03-15T00:00:00Z", "PasswordLastUsed": "2025-04-08T09:15:00Z"},
+        {"UserName": "bob.kumar", "Groups": ["Development"], "Tags": [{"Key": "Department", "Value": "Engineering"}, {"Key": "Title", "Value": "Software Engineer"}], "CreateDate": "2024-01-10T00:00:00Z", "PasswordLastUsed": "2025-04-08T09:22:00Z"},
+        {"UserName": "carol.jones", "Groups": ["SecurityOperations"], "Tags": [{"Key": "Department", "Value": "Security"}, {"Key": "Title", "Value": "Security Analyst"}], "CreateDate": "2024-06-01T00:00:00Z", "PasswordLastUsed": "2025-04-08T08:45:00Z"},
+        {"UserName": "dave.ops", "Groups": ["Operations"], "Tags": [{"Key": "Department", "Value": "Operations"}, {"Key": "Title", "Value": "DevOps Engineer"}, {"Key": "Status", "Value": "PendingMFAEnrollment"}], "CreateDate": "2025-03-01T00:00:00Z", "PasswordLastUsed": "2025-04-07T14:30:00Z"},
+        {"UserName": "terraform-ci", "Groups": ["CI-CD"], "Tags": [{"Key": "AccountType", "Value": "ServiceAccount"}], "CreateDate": "2023-01-01T00:00:00Z"}
+    ],
+    "access_keys": [
+        {"UserName": "terraform-ci", "AccessKeyId": "AKIA...REDACTED", "Status": "Active", "CreateDate": "2025-01-01T00:00:00Z", "LastUsedDate": "2025-04-08T09:00:00Z", "LastUsedService": "sts", "LastUsedRegion": "eu-west-1"}
     ]
 }

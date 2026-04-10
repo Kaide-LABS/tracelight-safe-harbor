@@ -10,7 +10,7 @@ class ShieldWallSettings(BaseSettings):
     max_questions: int = 500
     generation_timeout_s: int = 900
     gpt4o_model: str = "gpt-4o"
-    gemini_model: str = "gemini-3-flash-preview"
+    gemini_model: str = "gemini-3.1-pro-preview"
     demo_mode: bool = True
     
     aws_region: str = "eu-west-1"

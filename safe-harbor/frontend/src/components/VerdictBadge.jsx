@@ -146,7 +146,7 @@ export default function VerdictBadge({ jobId, result, schema, events, onReset })
       )}
 
       {showViewer && (
-        <SpreadsheetViewer events={events} onClose={() => setShowViewer(false)} />
+        <SpreadsheetViewer jobId={jobId} onClose={() => setShowViewer(false)} />
       )}
     </div>
   );

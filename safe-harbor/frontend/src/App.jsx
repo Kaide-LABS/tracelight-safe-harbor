@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import UploadZone from './components/UploadZone';
 import SchemaTerminal from './components/SchemaTerminal';
-import DataWaterfall from './components/DataWaterfall';
 import VerdictBadge from './components/VerdictBadge';
 import { useWebSocket } from './hooks/useWebSocket';
 import { API_BASE } from './config';
@@ -10,7 +9,6 @@ function App() {
   const [jobId, setJobId] = useState(null);
   const [appPhase, setAppPhase] = useState('UPLOAD');
   const [auditData, setAuditData] = useState(null);
-  const pendingVerdict = useRef(false);
 
   const { events, phase: wsPhase, lastEvent } = useWebSocket(jobId);
 
@@ -18,27 +16,17 @@ function App() {
     if (!jobId) return;
 
     if (lastEvent?.event_type === 'complete') {
-      if (appPhase !== 'WATERFALL') {
-        setAppPhase('WATERFALL');
-      }
-      pendingVerdict.current = true;
+      // Pipeline complete — go straight to verdict
+      setAppPhase('VERDICT');
       fetch(`${API_BASE}/api/audit/${jobId}`)
         .then(res => res.json())
         .then(data => setAuditData(data))
         .catch(() => {});
-    } else if (wsPhase === 'generate' || wsPhase === 'validate' || wsPhase === 'write') {
-      setAppPhase('WATERFALL');
-    } else if (wsPhase === 'parse' || wsPhase === 'schema_extract') {
+    } else if (wsPhase) {
+      // Any active phase — show terminal with live progress
       setAppPhase('TERMINAL');
     }
   }, [wsPhase, lastEvent, jobId]);
-
-  const handleWaterfallDone = () => {
-    if (pendingVerdict.current && lastEvent?.data) {
-      pendingVerdict.current = false;
-      setAppPhase('VERDICT');
-    }
-  };
 
   const showNav = appPhase === 'UPLOAD' || appPhase === 'VERDICT';
 
@@ -66,11 +54,7 @@ function App() {
         )}
 
         {appPhase === 'TERMINAL' && (
-          <SchemaTerminal events={events.filter(e => e.phase === 'parse' || e.phase === 'schema_extract')} />
-        )}
-
-        {appPhase === 'WATERFALL' && (
-          <DataWaterfall events={events} onComplete={handleWaterfallDone} />
+          <SchemaTerminal events={events} />
         )}
 
         {appPhase === 'VERDICT' && lastEvent?.data && (
@@ -78,7 +62,7 @@ function App() {
             jobId={jobId}
             result={lastEvent.data}
             events={events}
-            onReset={() => { setJobId(null); setAppPhase('UPLOAD'); setAuditData(null); pendingVerdict.current = false; }}
+            onReset={() => { setJobId(null); setAppPhase('UPLOAD'); setAuditData(null); }}
             schema={auditData?.template_schema || {
               model_type: 'unknown',
               industry: 'General Corporate',
