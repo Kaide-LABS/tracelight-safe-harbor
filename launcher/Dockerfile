@@ -1,7 +1,14 @@
-FROM node:20-slim
+FROM node:20-slim AS builder
 WORKDIR /app
-COPY package.json .
+COPY package.json package-lock.json* ./
 RUN npm install
 COPY . .
-EXPOSE 5173
-CMD ["npx", "vite", "--host", "0.0.0.0", "--port", "5173"]
+ARG VITE_SAFE_HARBOR_URL
+ENV VITE_SAFE_HARBOR_URL=$VITE_SAFE_HARBOR_URL
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]

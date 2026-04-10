@@ -30,11 +30,19 @@ allowed_origins = [
     "http://localhost:5175",
     os.getenv("FRONTEND_ORIGIN", ""),
 ]
+# Add Cloud Run origins
+for env_key in ["LAUNCHER_URL", "SAFE_HARBOR_FRONTEND_URL"]:
+    url = os.getenv(env_key, "")
+    if url:
+        allowed_origins.append(url)
+# Allow all *.run.app origins for Cloud Run
+allowed_origins.append("https://*.run.app")
 allowed_origins = [o for o in allowed_origins if o]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.run\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -41,7 +41,7 @@ function App() {
             </a>
             <div className="flex items-center gap-6 text-sm">
               <span className="text-[#4ADE80] font-medium text-xs border border-[#4ADE80]/30 rounded px-2 py-0.5">Safe-Harbor</span>
-              <a href="http://localhost:5173" className="text-[#E6EDF3]/40 hover:text-white transition-colors text-xs">Home</a>
+              <a href={import.meta.env.VITE_LAUNCHER_URL || "http://localhost:5173"} className="text-[#E6EDF3]/40 hover:text-white transition-colors text-xs">Home</a>
             </div>
           </div>
         </nav>
