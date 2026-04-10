@@ -13,6 +13,7 @@ from backend.agents.schema_extractor import extract_schema
 from backend.agents.synthetic_gen import generate_synthetic_data
 from backend.agents.validator import DeterministicValidator
 from backend.agents.post_processor import post_process
+from backend.agents.bs_plug import balance_bs
 from backend.middleware import cost_tracker
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,10 @@ class PipelineOrchestrator:
             
             final_payload = result.validated_payload if result.validated_payload else payload
             await asyncio.to_thread(write_synthetic_data, file_path, final_payload, output_path)
-            
+
+            # Two-pass BS balance plug: evaluate formulas, compute imbalance, write correction
+            await asyncio.to_thread(balance_bs, output_path, parsed)
+
             self.jobs[job_id].output_file_path = output_path
             self._update_status(job_id, "complete")
             self._log_audit(job_id, "write", "Output file generated successfully")

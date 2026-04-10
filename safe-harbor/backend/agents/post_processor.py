@@ -369,117 +369,9 @@ def post_process(cells, parsed_template=None):
             else:
                 period_grids[t] = g
 
-    # ── Phase 3: BS Balance Plug (Google Sheets Mirror) ─────────────────
-    # The plug must predict EXACTLY what Google Sheets will compute from the
-    # WRITTEN input values + template formulas. Two critical insights:
-    # 1. RE is cumulative: RE_t = RE_{t-1} + NI_t. Must track chronologically.
-    # 2. Formula cells (Cash, Debt, CurrDebt) are computed by Sheets from
-    #    CF/DS values — use the solver's FINAL values for those, not BS grid.
-    r_other_nca = _row(rm, "bs", "bs_other_noncurr")
-    r_other_lt_liab = _row(rm, "bs", "bs_other_lt_liab")
-
-    # Determine what the WRITTEN values will be for each period.
-    # These are the values that actually end up in the xlsx and that
-    # Google Sheets formula cells will reference.
-
-    # First, collect the final write-back values per period
-    # (mirroring Phase 5's logic but computing ahead of time)
-    def _final_val(t, sheet, row_num):
-        """Get the value that will actually be written for this cell."""
-        g = period_grids[t]
-        return _get(g, sheet, row_num)
-
-    # Track cumulative RE across periods (Gemini's key insight)
-    cumulative_re = 0.0
-
-    for t in range(6):
-        g = period_grids[t]
-
-        # ── What Sheets will compute for FORMULA cells ──
-
-        # Cash (BS) = CF Ending Cash (formula: ='Cash Flow Statement'!col32)
-        # CF Ending Cash was computed by the solver
-        cash = _final_val(t, CF, r_cf_end)
-
-        # Current Debt (BS) = DS Senior Repayments (formula: ='Debt Schedule'!col7)
-        r_curr_debt_bs = _row(rm, "bs", "bs_curr_debt")
-        if r_curr_debt_bs and (BS, r_curr_debt_bs) in rm["formula_rows"]:
-            curr_debt = abs(_final_val(t, DS, _row(rm, "ds", "ds_senior_repay"))) if DS else 0
-        else:
-            curr_debt = _final_val(t, BS, r_curr_debt_bs)
-
-        # Senior Debt (BS) = DS Senior Ending Balance (formula)
-        sen_end_val = _final_val(t, DS, _row(rm, "ds", "ds_senior_end")) if DS else 0
-        # Mezz Debt (BS) = DS Mezz Ending Balance (formula)
-        mezz_end_val = _final_val(t, DS, _row(rm, "ds", "ds_mezz_end")) if DS else 0
-
-        # Net Income for RE accumulation (from IS, computed by solver)
-        ni = _final_val(t, IS, _row(rm, "is", "is_net_income"))
-
-        # RE: cumulative. For FY2020 (t=0), template formula is ='IS'!B12
-        # For t>0: =prev_RE + 'IS'!col12
-        if t == 0:
-            cumulative_re = ni  # First period: RE = NI (no prior RE)
-        else:
-            cumulative_re = cumulative_re + ni
-
-        # ── ASSETS (using final written INPUT values + computed formula values) ──
-        ar = _final_val(t, BS, _row(rm, "bs", "bs_ar"))
-        inv = _final_val(t, BS, _row(rm, "bs", "bs_inventory"))
-        other_ca = _final_val(t, BS, _row(rm, "bs", "bs_other_curr"))
-        tca = cash + ar + inv + other_ca  # Row 9: =SUM(B5:B8)
-
-        ppe_gross = _final_val(t, BS, _row(rm, "bs", "bs_ppe_gross"))
-        accum_depr = _final_val(t, BS, _row(rm, "bs", "bs_accum_depr"))
-        if ppe_gross != 0 or accum_depr != 0:
-            ppe_net = ppe_gross - abs(accum_depr)  # Row 13: =B11-B12
-        else:
-            ppe_net = _final_val(t, BS, _row(rm, "bs", "bs_ppe_net"))
-
-        goodwill = _final_val(t, BS, _row(rm, "bs", "bs_goodwill"))
-        intangibles = _final_val(t, BS, _row(rm, "bs", "bs_intangibles"))
-        dta = _final_val(t, BS, _row(rm, "bs", "bs_deferred_tax_a"))
-        # Other NCA is the PLUG — exclude from base
-        nca_without_plug = ppe_net + goodwill + intangibles + dta
-        total_assets_without_plug = tca + nca_without_plug  # Row 20 minus Other NCA
-
-        # ── LIABILITIES ──
-        ap = _final_val(t, BS, _row(rm, "bs", "bs_ap"))
-        accrued = _final_val(t, BS, _row(rm, "bs", "bs_accrued"))
-        deferred_rev = _final_val(t, BS, _row(rm, "bs", "bs_deferred_rev"))
-        tcl = ap + accrued + deferred_rev + curr_debt  # Row 27
-
-        lt_debt = sen_end_val + mezz_end_val  # Row 31
-        dtl = _final_val(t, BS, _row(rm, "bs", "bs_deferred_tax_l"))
-        other_ltl = _final_val(t, BS, r_other_lt_liab)
-        tncl = lt_debt + dtl + other_ltl  # Row 34
-        total_liab = tcl + tncl  # Row 36
-
-        # ── EQUITY (using cumulative RE) ──
-        common_eq = _final_val(t, BS, _row(rm, "bs", "bs_common_equity"))
-        aoci = _final_val(t, BS, _row(rm, "bs", "bs_aoci"))
-        total_equity = common_eq + cumulative_re + aoci  # Row 42
-
-        # ── TARGET: what Sheets will compute for Total L+E (Row 44) ──
-        total_le = total_liab + total_equity
-
-        # ── PLUG: Other NCA = Total_L+E - partial_Total_Assets ──
-        plugged_other_nca = total_le - total_assets_without_plug
-
-        if plugged_other_nca < 0:
-            # Assets already exceed L+E. Zero Other NCA, reduce Other LTL.
-            plugged_other_nca = 0
-            total_assets_final = total_assets_without_plug
-            needed_other_ltl = total_assets_final - total_equity - tcl - lt_debt - dtl
-            if r_other_lt_liab and _is_input(rm, "bs", r_other_lt_liab):
-                _set(g, BS, r_other_lt_liab, max(0, round(needed_other_ltl, 2)))
-
-        if r_other_nca and _is_input(rm, "bs", r_other_nca):
-            _set(g, BS, r_other_nca, round(plugged_other_nca, 2))
-
-        period_grids[t] = g
-
-    # ── Phase 5: Write back ONLY writable input cells ──────────────────────
+    # ── Phase 3: Write back ONLY writable input cells ──────────────────────
+    # BS balance plug is handled AFTER xlsx write via bs_plug.balance_bs()
+    # which uses formulas.ExcelModel to evaluate actual template formulas.
     output = copy.deepcopy(cells)
 
     for t in range(6):
@@ -538,17 +430,5 @@ def post_process(cells, parsed_template=None):
             if idx is not None:
                 r_me = _row(rm, "ds", "ds_mezz_end")
                 output[idx]["value"] = round(_get(g, DS, r_me), 2)
-
-        # BS Balance Plug: Other Non-Current Assets
-        if r_other_nca and _is_input(rm, "bs", r_other_nca):
-            idx = cell_index.get((BS, r_other_nca, t))
-            if idx is not None:
-                output[idx]["value"] = round(_get(g, BS, r_other_nca), 2)
-
-        # BS Balance Plug: Other Long-Term Liabilities (fallback)
-        if r_other_lt_liab and _is_input(rm, "bs", r_other_lt_liab):
-            idx = cell_index.get((BS, r_other_lt_liab, t))
-            if idx is not None:
-                output[idx]["value"] = round(_get(g, BS, r_other_lt_liab), 2)
 
     return output
