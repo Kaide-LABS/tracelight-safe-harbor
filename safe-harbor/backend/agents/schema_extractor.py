@@ -192,10 +192,10 @@ async def extract_schema(parsed_template: dict, settings: Settings, on_progress=
         if on_progress:
             await on_progress(msg)
 
-    await _report("Attempting Gemini 3 Flash (chunked schema extraction)...")
+    await _report("Extracting financial schema...")
     try:
         schema = await _try_gemini(parsed_template, settings, on_progress=_report)
-        await _report("Gemini 3 Flash schema extraction succeeded")
+        await _report("Schema extraction complete")
     except Exception as e:
         reason = "timed out" if isinstance(e, asyncio.TimeoutError) else str(e)
         logger.warning(f"Gemini failed, falling back to GPT-4o: {reason}")
