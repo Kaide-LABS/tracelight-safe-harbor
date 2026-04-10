@@ -1,31 +1,26 @@
 """
-LBO Circular Reference Solver (Fixed-Point Iteration)
-Based on Gemini Deep Research + Claude Red-Team implementation.
+Template-Driven Circular Reference Solver (Fixed-Point Iteration)
 
-Takes flat cell list, modifies ONLY input cells:
-- Retained Earnings (BS row 40) — all periods
-- Beginning Cash (CF row 31) — t>0
-- Scheduled Repayments (DS rows 7, 18) — t>0 (positive, template subtracts)
+Resolves the Interest -> NI -> CF -> Repayment circularity in LBO models.
+Uses row_map from parser output — no hardcoded row numbers.
 
-Uses Banach fixed-point iteration to resolve the Interest → NI → CF → Repayment circularity.
+For DCF templates: passes through (no circular refs).
+For 3-Statement: simplified solver (no debt tranches).
 """
 import copy
+from backend.agents.row_map import build_row_map
 
 # ── Column / Period mapping ──────────────────────────────────────────────────
 COL_TO_PERIOD = {"B": 0, "C": 1, "D": 2, "E": 3, "F": 4, "G": 5}
 PERIOD_TO_COL = {v: k for k, v in COL_TO_PERIOD.items()}
-
-# ── Sheet names (must match actual template) ─────────────────────────────────
-IS = "Income Statement"
-DS = "Debt Schedule"
-CF = "Cash Flow Statement"
-BS = "Balance Sheet"
 
 
 def _key(sheet, row):
     return (sheet, row)
 
 def _get(grid, sheet, row, default=0.0):
+    if row is None:
+        return default
     v = grid.get(_key(sheet, row), default)
     try:
         return float(v)
@@ -33,169 +28,223 @@ def _get(grid, sheet, row, default=0.0):
         return default
 
 def _set(grid, sheet, row, val):
-    grid[_key(sheet, row)] = val
+    if row is not None:
+        grid[_key(sheet, row)] = val
 
 
-def simulate_period(grid, prev, senior_repay, mezz_repay, default_tax_rate=0.25):
-    """Simulate full IS → DS → CF → BS chain for one period. Returns (grid, new_sen_repay, new_mezz_repay)."""
+def _row(rm, sheet_key, canonical):
+    """Look up row number from row_map. Returns None if not found."""
+    sname = rm["sheet_names"].get(sheet_key)
+    if not sname:
+        return None
+    return rm["row_map"].get((sname, canonical))
+
+
+def _is_input(rm, sheet_key, row):
+    """Check if a cell is an input (writable) cell."""
+    sname = rm["sheet_names"].get(sheet_key)
+    if not sname or row is None:
+        return False
+    return (sname, row) in rm["input_rows"]
+
+
+def simulate_period_lbo(grid, prev, senior_repay, mezz_repay, rm, default_tax_rate=0.25):
+    """Simulate full IS -> DS -> CF -> BS chain for one LBO period.
+    Returns (grid, new_sen_repay, new_mezz_repay)."""
     g = grid
+    IS = rm["sheet_names"].get("is", "Income Statement")
+    BS = rm["sheet_names"].get("bs", "Balance Sheet")
+    CF = rm["sheet_names"].get("cf", "Cash Flow")
+    DS = rm["sheet_names"].get("ds", "Debt Schedule")
+
+    # Row lookups
+    r_sen_begin = _row(rm, "ds", "ds_senior_begin")
+    r_sen_draw = _row(rm, "ds", "ds_senior_draw")
+    r_sen_repay = _row(rm, "ds", "ds_senior_repay")
+    r_sen_end = _row(rm, "ds", "ds_senior_end")
+    r_sen_rate = _row(rm, "ds", "ds_senior_rate")
+    r_sen_interest = _row(rm, "ds", "ds_senior_interest")
+
+    r_mezz_begin = _row(rm, "ds", "ds_mezz_begin")
+    r_mezz_draw = _row(rm, "ds", "ds_mezz_draw")
+    r_mezz_repay = _row(rm, "ds", "ds_mezz_repay")
+    r_mezz_end = _row(rm, "ds", "ds_mezz_end")
+    r_mezz_rate = _row(rm, "ds", "ds_mezz_rate")
+    r_mezz_interest = _row(rm, "ds", "ds_mezz_interest")
+    r_ds_total_interest = _row(rm, "ds", "ds_total_interest")
+
+    r_rev = _row(rm, "is", "is_revenue")
+    r_cogs = _row(rm, "is", "is_cogs")
+    r_gross = _row(rm, "is", "is_gross_profit")
+    r_sga = _row(rm, "is", "is_sga")
+    r_ebitda = _row(rm, "is", "is_ebitda")
+    r_da = _row(rm, "is", "is_da")
+    r_ebit = _row(rm, "is", "is_ebit")
+    r_interest = _row(rm, "is", "is_interest_expense")
+    r_ebt = _row(rm, "is", "is_ebt")
+    r_tax = _row(rm, "is", "is_tax")
+    r_ni = _row(rm, "is", "is_net_income")
+
+    r_cf_wc = _row(rm, "cf", "cf_wc_changes")
+    r_cf_ops = _row(rm, "cf", "cf_ops")
+    r_cf_capex = _row(rm, "cf", "cf_capex")
+    r_cf_inv = _row(rm, "cf", "cf_inv")
+    r_cf_draws = _row(rm, "cf", "cf_debt_draws")
+    r_cf_repay = _row(rm, "cf", "cf_debt_repay")
+    r_cf_div = _row(rm, "cf", "cf_dividends")
+    r_cf_fin = _row(rm, "cf", "cf_fin")
+    r_cf_net = _row(rm, "cf", "cf_net_change")
+    r_cf_begin = _row(rm, "cf", "cf_begin_cash")
+    r_cf_end = _row(rm, "cf", "cf_end_cash")
+
+    r_bs_cash = _row(rm, "bs", "bs_cash")
 
     # ── 0. Cross-period linkages ─────────────────────────────────────────────
-    prev_end_cash = _get(prev, CF, 32, default=_get(prev, BS, 5))
-    _set(g, CF, 31, prev_end_cash)
+    # Senior Beginning Balance(t) = Senior Ending Balance(t-1)
+    prev_sen_end = _get(prev, DS, r_sen_end, default=_get(prev, DS, r_sen_begin))
+    if r_sen_begin and _is_input(rm, "ds", r_sen_begin):
+        _set(g, DS, r_sen_begin, prev_sen_end)
 
-    prev_sen_end = _get(prev, DS, 9, default=_get(prev, DS, 5))
-    _set(g, DS, 5, prev_sen_end)
+    # Mezz Beginning Balance(t) = Mezz Ending Balance(t-1)
+    prev_mezz_end = _get(prev, DS, r_mezz_end, default=_get(prev, DS, r_mezz_begin))
+    if r_mezz_begin and _is_input(rm, "ds", r_mezz_begin):
+        _set(g, DS, r_mezz_begin, prev_mezz_end)
 
-    prev_mezz_end = _get(prev, DS, 20, default=_get(prev, DS, 16))
-    _set(g, DS, 16, prev_mezz_end)
-
-    # ── 1. Plug repayment guesses (positive — template subtracts) ────────────
-    _set(g, DS, 7, senior_repay)
-    _set(g, DS, 18, mezz_repay)
+    # ── 1. Plug repayment guesses ────────────────────────────────────────────
+    if r_sen_repay and _is_input(rm, "ds", r_sen_repay):
+        _set(g, DS, r_sen_repay, senior_repay)
+    if r_mezz_repay and _is_input(rm, "ds", r_mezz_repay):
+        _set(g, DS, r_mezz_repay, mezz_repay)
 
     # ── 2. Debt Schedule ─────────────────────────────────────────────────────
-    sen_begin = _get(g, DS, 5)
-    sen_draw = _get(g, DS, 6)
+    sen_begin = _get(g, DS, r_sen_begin)
+    sen_draw = _get(g, DS, r_sen_draw)
     sen_end = sen_begin + sen_draw - senior_repay
-    _set(g, DS, 9, sen_end)
+    _set(g, DS, r_sen_end, sen_end)
 
-    sen_rate = _get(g, DS, 11)
-    sen_avg = (sen_begin + sen_end) / 2.0
-    _set(g, DS, 12, sen_avg)
-    sen_interest = sen_avg * sen_rate
-    _set(g, DS, 13, sen_interest)
+    sen_rate = _get(g, DS, r_sen_rate)
+    sen_interest = sen_begin * sen_rate  # BEGIN x RATE (matches template formula)
+    _set(g, DS, r_sen_interest, sen_interest)
 
-    mezz_begin = _get(g, DS, 16)
-    mezz_draw = _get(g, DS, 17)
+    mezz_begin = _get(g, DS, r_mezz_begin)
+    mezz_draw = _get(g, DS, r_mezz_draw)
     mezz_end = mezz_begin + mezz_draw - mezz_repay
-    _set(g, DS, 20, mezz_end)
+    _set(g, DS, r_mezz_end, mezz_end)
 
-    mezz_rate = _get(g, DS, 22)
-    mezz_avg = (mezz_begin + mezz_end) / 2.0
-    _set(g, DS, 23, mezz_avg)
-    mezz_interest = mezz_avg * mezz_rate
-    _set(g, DS, 24, mezz_interest)
+    mezz_rate = _get(g, DS, r_mezz_rate)
+    mezz_interest = mezz_begin * mezz_rate  # BEGIN x RATE
+    _set(g, DS, r_mezz_interest, mezz_interest)
+
+    total_interest = sen_interest + mezz_interest
+    _set(g, DS, r_ds_total_interest, total_interest)
 
     # ── 3. Income Statement ──────────────────────────────────────────────────
-    revenue = _get(g, IS, 4)
-    cogs = _get(g, IS, 5)
+    revenue = _get(g, IS, r_rev)
+    cogs = _get(g, IS, r_cogs)
     gross = revenue - cogs
-    _set(g, IS, 6, gross)
+    _set(g, IS, r_gross, gross)
 
-    sga = _get(g, IS, 9)
-    rnd = _get(g, IS, 10)
-    other_opex = _get(g, IS, 11)
-    total_opex = sga + rnd + other_opex
-    _set(g, IS, 12, total_opex)
+    sga = _get(g, IS, r_sga)
+    ebitda = gross - sga  # Template: =Gross Profit - SG&A
+    _set(g, IS, r_ebitda, ebitda)
 
-    ebitda = gross - total_opex
-    _set(g, IS, 14, ebitda)
+    da = _get(g, IS, r_da)
+    ebit = ebitda - abs(da)  # Template: =EBITDA - D&A
+    _set(g, IS, r_ebit, ebit)
 
-    da = _get(g, IS, 17)  # negative on IS
-    ebit = ebitda + da  # da is negative, so this subtracts
-    _set(g, IS, 18, ebit)
+    # Interest Expense on IS = DS Total Interest
+    _set(g, IS, r_interest, total_interest)
 
-    _set(g, IS, 21, sen_interest)
-    _set(g, IS, 22, mezz_interest)
-    total_interest = sen_interest + mezz_interest
-    _set(g, IS, 23, total_interest)
+    ebt = ebit - total_interest  # Template: =EBIT - Interest
+    _set(g, IS, r_ebt, ebt)
 
-    ebt = ebit - total_interest
-    _set(g, IS, 25, ebt)
-
-    tax_rate = _get(g, IS, 26, default_tax_rate)
-    tax_expense = max(0.0, ebt * tax_rate)
-    _set(g, IS, 27, tax_expense)
-
-    net_income = ebt - tax_expense
-    _set(g, IS, 29, net_income)
+    tax = _get(g, IS, r_tax)
+    if tax == 0:
+        tax = max(0.0, ebt * default_tax_rate)
+    net_income = ebt - tax  # Template: =EBT - Tax
+    _set(g, IS, r_ni, net_income)
 
     # ── 4. Cash Flow ─────────────────────────────────────────────────────────
-    _set(g, CF, 5, net_income)
-    da_addback = abs(da)
-    _set(g, CF, 6, da_addback)
+    _set(g, CF, _row(rm, "cf", "cf_net_income"), net_income)
+    _set(g, CF, _row(rm, "cf", "cf_da"), abs(da))
 
-    # Working capital changes (computed from BS deltas)
-    chg_ar = -(_get(g, BS, 6) - _get(prev, BS, 6))
-    chg_inv = -(_get(g, BS, 7) - _get(prev, BS, 7))
-    chg_ap = _get(g, BS, 23) - _get(prev, BS, 23)
-    chg_accrued = _get(g, BS, 24) - _get(prev, BS, 24)
-    chg_defrev = _get(g, BS, 25) - _get(prev, BS, 25)
-    _set(g, CF, 9, chg_ar)
-    _set(g, CF, 10, chg_inv)
-    _set(g, CF, 11, chg_ap)
-    _set(g, CF, 12, chg_accrued)
-    _set(g, CF, 13, chg_defrev)
+    wc_changes = _get(g, CF, r_cf_wc)  # Single input cell in template
+    ops_cf = net_income + abs(da) + wc_changes
+    _set(g, CF, r_cf_ops, ops_cf)
 
-    net_wc = chg_ar + chg_inv + chg_ap + chg_accrued + chg_defrev
-    _set(g, CF, 14, net_wc)
+    capex = _get(g, CF, r_cf_capex)
+    inv_cf = -abs(capex) if capex >= 0 else capex  # Template: =-CapEx
+    _set(g, CF, r_cf_inv, inv_cf)
 
-    net_cash_ops = net_income + da_addback + net_wc
-    _set(g, CF, 16, net_cash_ops)
+    # Financing: template uses Draws - Repay - Dividends
+    draws = _get(g, CF, r_cf_draws)
+    dividends = _get(g, CF, r_cf_div)
+    total_repay = senior_repay + mezz_repay
+    fin_cf = draws - total_repay - dividends
+    _set(g, CF, r_cf_fin, fin_cf)
 
-    capex = _get(g, CF, 19)
-    acquisitions = _get(g, CF, 20)
-    other_inv = _get(g, CF, 21)
-    net_cash_inv = capex + acquisitions + other_inv
-    _set(g, CF, 22, net_cash_inv)
+    net_change = ops_cf + inv_cf + fin_cf
+    _set(g, CF, r_cf_net, net_change)
 
-    debt_draws = sen_draw + mezz_draw
-    _set(g, CF, 25, debt_draws)
-    debt_repay_cf = -(senior_repay + mezz_repay)  # negative on CF
-    _set(g, CF, 26, debt_repay_cf)
-    dividends = _get(g, CF, 27)
-    net_cash_fin = debt_draws + debt_repay_cf - dividends
-    _set(g, CF, 28, net_cash_fin)
-
-    net_change = net_cash_ops + net_cash_inv + net_cash_fin
-    _set(g, CF, 30, net_change)
-
-    beg_cash = _get(g, CF, 31)
-    end_cash = beg_cash + net_change
-    _set(g, CF, 32, end_cash)
+    # Beginning Cash is a FORMULA in the template — read from prev period's ending cash
+    prev_end_cash = _get(prev, CF, r_cf_end, default=_get(prev, BS, r_bs_cash))
+    _set(g, CF, r_cf_begin, prev_end_cash)
+    end_cash = prev_end_cash + net_change
+    _set(g, CF, r_cf_end, end_cash)
 
     # ── 5. Balance Sheet ─────────────────────────────────────────────────────
-    _set(g, BS, 5, end_cash)
+    # Cash on BS should equal ending cash from CF — Cash IS an input cell
+    if r_bs_cash and _is_input(rm, "bs", r_bs_cash):
+        _set(g, BS, r_bs_cash, end_cash)
 
-    curr_assets = end_cash + _get(g, BS, 6) + _get(g, BS, 7) + _get(g, BS, 8)
-    _set(g, BS, 9, curr_assets)
+    # Update BS debt to match DS ending balances
+    r_bs_sen = _row(rm, "bs", "bs_senior_debt")
+    r_bs_mezz = _row(rm, "bs", "bs_mezz_debt")
+    if r_bs_sen and _is_input(rm, "bs", r_bs_sen):
+        _set(g, BS, r_bs_sen, sen_end)
+    if r_bs_mezz and _is_input(rm, "bs", r_bs_mezz):
+        _set(g, BS, r_bs_mezz, mezz_end)
 
-    ppe_net = _get(g, BS, 11) - abs(_get(g, BS, 12))
-    _set(g, BS, 13, ppe_net)
+    # Simulate BS totals for convergence check (don't write — these are formulas)
+    r_ar = _row(rm, "bs", "bs_ar")
+    r_inv = _row(rm, "bs", "bs_inventory")
+    r_other_ca = _row(rm, "bs", "bs_other_curr")
+    r_tca = _row(rm, "bs", "bs_total_curr_assets")
+    r_ppe = _row(rm, "bs", "bs_ppe_net")
+    r_gw = _row(rm, "bs", "bs_goodwill")
+    r_other_nca = _row(rm, "bs", "bs_other_noncurr")
+    r_ta = _row(rm, "bs", "bs_total_assets")
+    r_ap = _row(rm, "bs", "bs_ap")
+    r_accrued = _row(rm, "bs", "bs_accrued")
+    r_curr_debt = _row(rm, "bs", "bs_curr_debt")
+    r_tcl = _row(rm, "bs", "bs_total_curr_liab")
+    r_tl = _row(rm, "bs", "bs_total_liab")
+    r_ceq = _row(rm, "bs", "bs_common_equity")
+    r_re = _row(rm, "bs", "bs_retained_earnings")
+    r_te = _row(rm, "bs", "bs_total_equity")
+    r_tle = _row(rm, "bs", "bs_total_liab_equity")
 
-    non_curr = ppe_net + _get(g, BS, 14) + _get(g, BS, 15) + _get(g, BS, 16) + _get(g, BS, 17)
-    _set(g, BS, 18, non_curr)
+    curr_assets = end_cash + _get(g, BS, r_ar) + _get(g, BS, r_inv) + _get(g, BS, r_other_ca)
+    _set(g, BS, r_tca, curr_assets)
+    total_assets = curr_assets + _get(g, BS, r_ppe) + _get(g, BS, r_gw) + _get(g, BS, r_other_nca)
+    _set(g, BS, r_ta, total_assets)
 
-    total_assets = curr_assets + non_curr
-    _set(g, BS, 20, total_assets)
+    curr_liab = _get(g, BS, r_ap) + _get(g, BS, r_accrued) + _get(g, BS, r_curr_debt)
+    _set(g, BS, r_tcl, curr_liab)
+    total_liab = curr_liab + sen_end + mezz_end
+    _set(g, BS, r_tl, total_liab)
 
-    curr_liab = _get(g, BS, 23) + _get(g, BS, 24) + _get(g, BS, 25) + _get(g, BS, 26)
-    _set(g, BS, 27, curr_liab)
+    # RE rollforward: prev_RE + NI (this is a FORMULA cell — simulate but don't write back)
+    prev_re = _get(prev, BS, r_re)
+    retained = prev_re + net_income
+    _set(g, BS, r_re, retained)
 
-    _set(g, BS, 29, sen_end)
-    _set(g, BS, 30, mezz_end)
-    total_lt_debt = sen_end + mezz_end
-    _set(g, BS, 31, total_lt_debt)
-
-    non_curr_liab = total_lt_debt + _get(g, BS, 32) + _get(g, BS, 33)
-    _set(g, BS, 34, non_curr_liab)
-
-    total_liab = curr_liab + non_curr_liab
-    _set(g, BS, 36, total_liab)
-
-    # RE rollforward
-    prev_re = _get(prev, BS, 40)
-    retained = prev_re + net_income - dividends
-    _set(g, BS, 40, retained)
-
-    total_equity = _get(g, BS, 39) + retained + _get(g, BS, 41)
-    _set(g, BS, 42, total_equity)
-    _set(g, BS, 44, total_liab + total_equity)
-    _set(g, BS, 45, total_assets - (total_liab + total_equity))
+    total_equity = _get(g, BS, r_ceq) + retained
+    _set(g, BS, r_te, total_equity)
+    _set(g, BS, r_tle, total_liab + total_equity)
 
     # ── 6. Derive new repayment from cash available ──────────────────────────
-    cash_before_repay = end_cash + senior_repay + mezz_repay
+    cash_before_repay = end_cash + total_repay
     new_sen = min(sen_begin + sen_draw, max(0.0, cash_before_repay))
     remaining = max(0.0, cash_before_repay - new_sen)
     new_mezz = min(mezz_begin + mezz_draw, max(0.0, remaining))
@@ -205,12 +254,35 @@ def simulate_period(grid, prev, senior_repay, mezz_repay, default_tax_rate=0.25)
 
 def post_process(cells, parsed_template=None):
     """
-    Main entry point. Fixed-point iteration solver for LBO circular references.
-    Only modifies: RetainedEarnings, BeginningCash(t>0), Repayments(t>0).
+    Main entry point. Template-driven fixed-point iteration solver.
+    Only modifies INPUT cells — never writes to formula cells.
     """
+    if parsed_template is None:
+        return cells  # Can't fix what we can't map
+
+    rm = build_row_map(parsed_template)
+    template_type = rm["template_type"]
+
+    # DCF has no circular references — pass through
+    if template_type == "DCF":
+        return cells
+
+    # Need at minimum IS + BS + CF sheets
+    if not all(k in rm["sheet_names"] for k in ("is", "bs", "cf")):
+        return cells
+
+    IS = rm["sheet_names"]["is"]
+    BS = rm["sheet_names"]["bs"]
+    CF = rm["sheet_names"]["cf"]
+    DS = rm["sheet_names"].get("ds")
+
+    # If no debt schedule, no circular refs to solve
+    if template_type == "LBO" and not DS:
+        return cells
+
     # Parse flat cells into per-period grids
     period_grids = {t: {} for t in range(6)}
-    cell_index = {}  # (sheet, row, period_idx) → index in cells list
+    cell_index = {}  # (sheet, row, period_idx) -> index in cells list
 
     for i, c in enumerate(cells):
         ref = c.get("cell_ref", "")
@@ -234,103 +306,221 @@ def post_process(cells, parsed_template=None):
         period_grids[t][(sheet, row_num)] = val
         cell_index[(sheet, row_num, t)] = i
 
-    # ── Phase 1: Balance historical period (t=0) ────────────────────────────
-    g0 = period_grids[0]
+    # Row lookups for write-back
+    r_da = _row(rm, "is", "is_da")
+    r_sen_repay = _row(rm, "ds", "ds_senior_repay") if DS else None
+    r_mezz_repay = _row(rm, "ds", "ds_mezz_repay") if DS else None
+    r_cf_repay = _row(rm, "cf", "cf_debt_repay")
+    r_cf_draws = _row(rm, "cf", "cf_debt_draws")
+    r_bs_cash = _row(rm, "bs", "bs_cash")
+    r_bs_sen = _row(rm, "bs", "bs_senior_debt")
+    r_bs_mezz = _row(rm, "bs", "bs_mezz_debt")
 
-    # Fix D&A sign: must be negative on IS
-    da0 = _get(g0, IS, 17)
-    if da0 > 0:
-        _set(g0, IS, 17, -da0)
+    # ── Phase 1: Fix sign conventions across all periods ────────────────────
+    for t in range(6):
+        g = period_grids[t]
+        # D&A should be positive (template subtracts it via formula)
+        if r_da:
+            da_val = _get(g, IS, r_da)
+            if da_val < 0:
+                _set(g, IS, r_da, abs(da_val))
 
-    # Fix repayment sign: must be positive for template formula
-    for repay_row in [7, 18]:
-        r = _get(g0, DS, repay_row)
-        if r < 0:
-            _set(g0, DS, repay_row, abs(r))
+        # Repayments should be positive (template subtracts via formula)
+        if r_sen_repay:
+            r = _get(g, DS, r_sen_repay)
+            if r < 0:
+                _set(g, DS, r_sen_repay, abs(r))
+        if r_mezz_repay:
+            r = _get(g, DS, r_mezz_repay)
+            if r < 0:
+                _set(g, DS, r_mezz_repay, abs(r))
 
-    # Compute t=0 DS ending balances
-    sen_end0 = _get(g0, DS, 5) + _get(g0, DS, 6) - _get(g0, DS, 7)
-    mezz_end0 = _get(g0, DS, 16) + _get(g0, DS, 17) - _get(g0, DS, 18)
-    _set(g0, DS, 9, sen_end0)
-    _set(g0, DS, 20, mezz_end0)
+    # ── Phase 2: Simulate ALL periods ────────────────────────────────────
+    # Run simulation for t=0 (single pass) and t=1..5 (fixed-point iteration)
+    # to populate formula cells in the grid before computing BS plug.
+    r_cf_end = _row(rm, "cf", "cf_end_cash")
+    r_cf_begin = _row(rm, "cf", "cf_begin_cash")
 
-    # Compute t=0 BS totals for RE plug
-    cash0 = _get(g0, BS, 5)
-    curr_a0 = cash0 + _get(g0, BS, 6) + _get(g0, BS, 7) + _get(g0, BS, 8)
-    ppe_net0 = _get(g0, BS, 11) - abs(_get(g0, BS, 12))
-    non_curr_a0 = ppe_net0 + _get(g0, BS, 14) + _get(g0, BS, 15) + _get(g0, BS, 16) + _get(g0, BS, 17)
-    total_a0 = curr_a0 + non_curr_a0
+    if template_type == "LBO" and DS:
+        # t=0: single simulation pass to populate formula cells
+        empty_prev = {}
+        g0 = copy.copy(period_grids[0])
+        g0, _, _ = simulate_period_lbo(g0, empty_prev,
+                                        _get(g0, DS, _row(rm, "ds", "ds_senior_repay")),
+                                        _get(g0, DS, _row(rm, "ds", "ds_mezz_repay")), rm)
+        period_grids[0] = g0
 
-    curr_l0 = _get(g0, BS, 23) + _get(g0, BS, 24) + _get(g0, BS, 25) + _get(g0, BS, 26)
-    non_curr_l0 = sen_end0 + mezz_end0 + _get(g0, BS, 32) + _get(g0, BS, 33)
-    total_l0 = curr_l0 + non_curr_l0
+        # t=1..5: fixed-point iteration
+        for t in range(1, 6):
+            prev = period_grids[t - 1]
+            sen_guess = 0.0
+            mezz_guess = 0.0
 
-    known_eq0 = _get(g0, BS, 39) + _get(g0, BS, 41)
-    re0 = total_a0 - total_l0 - known_eq0
-    _set(g0, BS, 40, re0)
+            for iteration in range(100):
+                g = copy.copy(period_grids[t])
+                g, new_sen, new_mezz = simulate_period_lbo(g, prev, sen_guess, mezz_guess, rm)
 
-    # Set t=0 EndCash for CF linkage
-    _set(g0, CF, 32, cash0)
-    _set(g0, CF, 31, cash0)
+                if abs(new_sen - sen_guess) <= 1e-4 and abs(new_mezz - mezz_guess) <= 1e-4:
+                    period_grids[t] = g
+                    break
 
-    # ── Phase 2: Fixed-point iteration for t=1..5 ───────────────────────────
-    for t in range(1, 6):
-        prev = period_grids[t - 1]
-        sen_guess = 0.0
-        mezz_guess = 0.0
-
-        # Fix D&A sign for this period
-        da_t = _get(period_grids[t], IS, 17)
-        if da_t > 0:
-            _set(period_grids[t], IS, 17, -da_t)
-
-        for iteration in range(100):
-            g = copy.copy(period_grids[t])
-            g, new_sen, new_mezz = simulate_period(g, prev, sen_guess, mezz_guess)
-
-            if abs(new_sen - sen_guess) <= 1e-4 and abs(new_mezz - mezz_guess) <= 1e-4:
+                sen_guess = new_sen
+                mezz_guess = new_mezz
+            else:
                 period_grids[t] = g
-                break
 
-            sen_guess = new_sen
-            mezz_guess = new_mezz
+    # ── Phase 3: BS Balance Plug ──────────────────────────────────────────
+    # After simulation, all formula cells in the grid are populated.
+    # Compute the BS imbalance and plug "Other Non-Current Assets" to force balance.
+    # This mirrors EXACTLY how the template formulas compute totals.
+    r_other_nca = _row(rm, "bs", "bs_other_noncurr")
+    r_other_lt_liab = _row(rm, "bs", "bs_other_lt_liab")
 
-    # ── Phase 3: Write back ONLY determined input cells ─────────────────────
+    for t in range(6):
+        g = period_grids[t]
+
+        # Read the simulated values (these match what template formulas will produce)
+        # ── Assets side ──
+        cash = _get(g, BS, _row(rm, "bs", "bs_cash"))  # grid has simulated value
+        ar = _get(g, BS, _row(rm, "bs", "bs_ar"))
+        inv = _get(g, BS, _row(rm, "bs", "bs_inventory"))
+        other_ca = _get(g, BS, _row(rm, "bs", "bs_other_curr"))
+        tca = cash + ar + inv + other_ca  # template: =SUM(Cash:OtherCurr)
+
+        ppe_gross = _get(g, BS, _row(rm, "bs", "bs_ppe_gross"))
+        accum_depr = _get(g, BS, _row(rm, "bs", "bs_accum_depr"))
+        ppe_net_row = _row(rm, "bs", "bs_ppe_net")
+        if ppe_gross != 0 or accum_depr != 0:
+            ppe_net = ppe_gross - abs(accum_depr)  # template: =Gross - Depr
+        else:
+            ppe_net = _get(g, BS, ppe_net_row)
+        goodwill = _get(g, BS, _row(rm, "bs", "bs_goodwill"))
+        intangibles = _get(g, BS, _row(rm, "bs", "bs_intangibles"))
+        dta = _get(g, BS, _row(rm, "bs", "bs_deferred_tax_a"))
+        # Other NCA is the PLUG — exclude it from the base calculation
+        nca_without_plug = ppe_net + goodwill + intangibles + dta
+        total_assets_without_plug = tca + nca_without_plug
+
+        # ── Liabilities side ──
+        ap = _get(g, BS, _row(rm, "bs", "bs_ap"))
+        accrued = _get(g, BS, _row(rm, "bs", "bs_accrued"))
+        deferred_rev = _get(g, BS, _row(rm, "bs", "bs_deferred_rev"))
+        # Current Debt is a formula =DS senior repayments
+        r_curr_debt_bs = _row(rm, "bs", "bs_curr_debt")
+        if r_curr_debt_bs and (BS, r_curr_debt_bs) in rm["formula_rows"]:
+            curr_debt = _get(g, DS, _row(rm, "ds", "ds_senior_repay")) if DS else 0
+        else:
+            curr_debt = _get(g, BS, r_curr_debt_bs)
+        tcl = ap + accrued + deferred_rev + curr_debt
+
+        # Senior/Mezz Debt are formulas linking to DS ending balances
+        sen_end_val = _get(g, DS, _row(rm, "ds", "ds_senior_end")) if DS else _get(g, BS, _row(rm, "bs", "bs_senior_debt"))
+        mezz_end_val = _get(g, DS, _row(rm, "ds", "ds_mezz_end")) if DS else _get(g, BS, _row(rm, "bs", "bs_mezz_debt"))
+        lt_debt = sen_end_val + mezz_end_val
+        dtl = _get(g, BS, _row(rm, "bs", "bs_deferred_tax_l"))
+        other_ltl = _get(g, BS, r_other_lt_liab)
+        tncl = lt_debt + dtl + other_ltl
+        total_liab = tcl + tncl
+
+        # ── Equity side ──
+        common_eq = _get(g, BS, _row(rm, "bs", "bs_common_equity"))
+        retained = _get(g, BS, _row(rm, "bs", "bs_retained_earnings"))
+        aoci = _get(g, BS, _row(rm, "bs", "bs_aoci"))
+        total_equity = common_eq + retained + aoci
+
+        total_le = total_liab + total_equity
+
+        # Plug: set Other NCA so that Total Assets = Total L+E
+        # Total Assets = TCA + NCA_without_plug + Other_NCA
+        # Want: TCA + NCA_without_plug + Other_NCA = Total_L+E
+        # => Other_NCA = Total_L+E - TCA - NCA_without_plug
+        plugged_other_nca = total_le - total_assets_without_plug
+
+        if plugged_other_nca < 0:
+            # Assets side is already too large. Zero out Other NCA and reduce Other LTL instead.
+            plugged_other_nca = 0
+            total_assets_final = total_assets_without_plug
+            # Need: total_liab_adj + total_equity = total_assets_final
+            # tcl + lt_debt + dtl + other_ltl_adj + total_equity = total_assets_final
+            needed_other_ltl = total_assets_final - total_equity - tcl - lt_debt - dtl
+            if r_other_lt_liab and _is_input(rm, "bs", r_other_lt_liab):
+                _set(g, BS, r_other_lt_liab, max(0, round(needed_other_ltl, 2)))
+
+        if r_other_nca and _is_input(rm, "bs", r_other_nca):
+            _set(g, BS, r_other_nca, round(plugged_other_nca, 2))
+
+        period_grids[t] = g
+
+    # ── Phase 5: Write back ONLY writable input cells ──────────────────────
     output = copy.deepcopy(cells)
 
     for t in range(6):
         g = period_grids[t]
 
-        # Fix D&A sign in output (must be negative on IS)
-        idx = cell_index.get((IS, 17, t))
-        if idx is not None:
-            output[idx]["value"] = -abs(_get(g, IS, 17))
-
-        # Fix repayment signs in output (must be positive)
-        for repay_row in [7, 18]:
-            idx = cell_index.get((DS, repay_row, t))
+        # D&A sign fix (positive for template to subtract)
+        if r_da and _is_input(rm, "is", r_da):
+            idx = cell_index.get((IS, r_da, t))
             if idx is not None:
-                output[idx]["value"] = abs(_get(g, DS, repay_row))
+                output[idx]["value"] = round(abs(_get(g, IS, r_da)), 2)
 
-        # Retained Earnings — all periods
-        idx = cell_index.get((BS, 40, t))
-        if idx is not None:
-            output[idx]["value"] = round(_get(g, BS, 40), 2)
-
-        if t > 0:
-            # Beginning Cash
-            idx = cell_index.get((CF, 31, t))
+        # Senior Repayments (positive for template to subtract)
+        if r_sen_repay and _is_input(rm, "ds", r_sen_repay):
+            idx = cell_index.get((DS, r_sen_repay, t))
             if idx is not None:
-                output[idx]["value"] = round(_get(g, CF, 31), 2)
+                output[idx]["value"] = round(abs(_get(g, DS, r_sen_repay)), 2)
 
-            # Senior Repay (positive)
-            idx = cell_index.get((DS, 7, t))
+        # Mezz Repayments
+        if r_mezz_repay and _is_input(rm, "ds", r_mezz_repay):
+            idx = cell_index.get((DS, r_mezz_repay, t))
             if idx is not None:
-                output[idx]["value"] = round(abs(_get(g, DS, 7)), 2)
+                output[idx]["value"] = round(abs(_get(g, DS, r_mezz_repay)), 2)
 
-            # Mezz Repay (positive)
-            idx = cell_index.get((DS, 18, t))
+        # CF Debt Repayments (must match DS total repayments)
+        if r_cf_repay and _is_input(rm, "cf", r_cf_repay):
+            idx = cell_index.get((CF, r_cf_repay, t))
             if idx is not None:
-                output[idx]["value"] = round(abs(_get(g, DS, 18)), 2)
+                total_repay = abs(_get(g, DS, r_sen_repay)) + abs(_get(g, DS, r_mezz_repay)) if DS else 0
+                output[idx]["value"] = round(total_repay, 2)
+
+        # CF Debt Drawdowns (must match DS total drawdowns)
+        if r_cf_draws and _is_input(rm, "cf", r_cf_draws):
+            idx = cell_index.get((CF, r_cf_draws, t))
+            if idx is not None:
+                r_sd = _row(rm, "ds", "ds_senior_draw")
+                r_md = _row(rm, "ds", "ds_mezz_draw")
+                total_draws = (_get(g, DS, r_sd) + _get(g, DS, r_md)) if DS else 0
+                output[idx]["value"] = round(total_draws, 2)
+
+        # BS Cash = CF Ending Cash
+        if r_bs_cash and _is_input(rm, "bs", r_bs_cash):
+            idx = cell_index.get((BS, r_bs_cash, t))
+            if idx is not None:
+                output[idx]["value"] = round(_get(g, CF, r_cf_end), 2)
+
+        # BS Senior Debt = DS Senior Ending Balance
+        if r_bs_sen and _is_input(rm, "bs", r_bs_sen) and DS:
+            idx = cell_index.get((BS, r_bs_sen, t))
+            if idx is not None:
+                r_se = _row(rm, "ds", "ds_senior_end")
+                output[idx]["value"] = round(_get(g, DS, r_se), 2)
+
+        # BS Mezz Debt = DS Mezz Ending Balance
+        if r_bs_mezz and _is_input(rm, "bs", r_bs_mezz) and DS:
+            idx = cell_index.get((BS, r_bs_mezz, t))
+            if idx is not None:
+                r_me = _row(rm, "ds", "ds_mezz_end")
+                output[idx]["value"] = round(_get(g, DS, r_me), 2)
+
+        # BS Balance Plug: Other Non-Current Assets
+        if r_other_nca and _is_input(rm, "bs", r_other_nca):
+            idx = cell_index.get((BS, r_other_nca, t))
+            if idx is not None:
+                output[idx]["value"] = round(_get(g, BS, r_other_nca), 2)
+
+        # BS Balance Plug: Other Long-Term Liabilities (fallback)
+        if r_other_lt_liab and _is_input(rm, "bs", r_other_lt_liab):
+            idx = cell_index.get((BS, r_other_lt_liab, t))
+            if idx is not None:
+                output[idx]["value"] = round(_get(g, BS, r_other_lt_liab), 2)
 
     return output

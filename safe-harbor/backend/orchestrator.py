@@ -56,6 +56,7 @@ class PipelineOrchestrator:
         await ws_callback(WSEvent(job_id=job_id, phase="parse", event_type="progress", detail="Parsing Excel template..."))
         
         parsed = await asyncio.to_thread(parse_template, file_path)
+        self.jobs[job_id].parsed_template = parsed
         self._log_audit(job_id, "parse", "Template parsed", data={"total_input_cells": parsed["total_input_cells"]})
         await ws_callback(WSEvent(job_id=job_id, phase="parse", event_type="progress", detail=f"Found {parsed['total_input_cells']} input cells across {len(parsed['sheets'])} sheets"))
         for sheet in parsed['sheets']:

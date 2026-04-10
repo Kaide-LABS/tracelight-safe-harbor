@@ -110,6 +110,7 @@ class JobState(BaseModel):
     output_file_path: Optional[str] = None
     error_message: Optional[str] = None
     retry_count: int = 0
+    parsed_template: Optional[dict] = None
 
 class WSEvent(BaseModel):
     job_id: str

@@ -71,7 +71,7 @@ def _get_google_creds(sa_path: str):
         return service_account.Credentials.from_service_account_file(sa_path, scopes=SCOPES)
 
 
-def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_validation: bool = False) -> dict:
+def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_validation: bool = False, parsed_template: dict = None) -> dict:
     """Read xlsx with openpyxl, create Google Sheet via Sheets API, write all data."""
     import openpyxl
     from googleapiclient.discovery import build
@@ -136,7 +136,7 @@ def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_valida
 
     # Add Validation sheet with live formulas (only for generated output, not templates)
     if add_validation:
-        _add_validation_sheet(sheets_svc, spreadsheet_id, wb)
+        _add_validation_sheet(sheets_svc, spreadsheet_id, wb, parsed_template=parsed_template)
 
     # Make publicly viewable
     drive_svc.permissions().create(
@@ -150,41 +150,72 @@ def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_valida
     return {"embed_url": embed_url, "view_url": view_url, "sheet_id": spreadsheet_id}
 
 
-def _add_validation_sheet(sheets_svc, spreadsheet_id: str, wb):
-    """Add a 'Validation' sheet with live formulas proving data integrity."""
+def _add_validation_sheet(sheets_svc, spreadsheet_id: str, wb, parsed_template: dict = None):
+    """Add a 'Validation' sheet with live formulas proving data integrity.
+    Uses row_map from parsed_template for all row references — no hardcoded numbers."""
     import re
+    from backend.agents.row_map import build_row_map
 
-    # Check which sheets exist
-    sheet_names = [ws.title for ws in wb.worksheets]
-    has_is = 'Income Statement' in sheet_names
-    has_bs = 'Balance Sheet' in sheet_names
-    has_cf = 'Cash Flow Statement' in sheet_names
-    has_ds = 'Debt Schedule' in sheet_names
-    has_ra = 'Returns Analysis' in sheet_names
+    # Build row map from parser data if available
+    rm = build_row_map(parsed_template) if parsed_template else None
 
-    # Detect periods from row 2 of Income Statement (or row 1)
+    # Detect sheets — use row_map if available, else fall back to name matching
+    wb_sheet_names = [ws.title for ws in wb.worksheets]
+    wb_names_lower = {s.lower(): s for s in wb_sheet_names}
+
+    if rm:
+        sn = rm["sheet_names"]
+        is_name = sn.get("is")
+        bs_name = sn.get("bs")
+        cf_name = sn.get("cf")
+        ds_name = sn.get("ds")
+        ra_name = sn.get("ra")
+        template_type = rm["template_type"]
+        row_map = rm["row_map"]
+    else:
+        is_name = next((v for k, v in wb_names_lower.items() if "income" in k), None)
+        bs_name = next((v for k, v in wb_names_lower.items() if "balance" in k), None)
+        cf_name = next((v for k, v in wb_names_lower.items() if "cash flow" in k), None)
+        ds_name = next((v for k, v in wb_names_lower.items() if "debt" in k), None)
+        ra_name = next((v for k, v in wb_names_lower.items() if "return" in k), None)
+        template_type = "unknown"
+        row_map = {}
+
+    has_is = is_name is not None
+    has_bs = bs_name is not None
+    has_cf = cf_name is not None
+    has_ds = ds_name is not None
+
+    def _r(sheet_name, canonical):
+        """Get row number for a canonical key, or None."""
+        if not sheet_name or not rm:
+            return None
+        return row_map.get((sheet_name, canonical))
+
+    # Detect periods
     periods = []
     if has_is:
-        ws = wb['Income Statement']
+        ws = wb[is_name]
         for col in range(2, ws.max_column + 1):
-            for r in [2, 1]:
+            for r in [1, 2]:
                 val = ws.cell(row=r, column=col).value
                 if val and re.search(r'(FY|CY)?\d{4}', str(val)):
                     periods.append({"col_letter": chr(64 + col), "label": str(val).strip()})
                     break
     if not periods:
-        return  # Can't build validation without periods
+        return
 
     cols = [p["col_letter"] for p in periods]
 
     # Add the validation sheet
     sheets_svc.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
-        body={"requests": [{"addSheet": {"properties": {"title": "✓ Validation"}}}]},
+        body={"requests": [{"addSheet": {"properties": {"title": "\u2713 Validation"}}}]},
     ).execute()
 
     # Build validation rows
     rows = []
+    current_row = 0  # Track row number for self-references
 
     def _header(text):
         return [{"userEnteredValue": {"stringValue": text}, "userEnteredFormat": {"textFormat": {"bold": True, "fontSize": 11}}}]
@@ -193,127 +224,200 @@ def _add_validation_sheet(sheets_svc, spreadsheet_id: str, wb):
         return [{"userEnteredValue": {"stringValue": text}}]
 
     def _formula_row(label, formulas):
-        """Row with label in A, formulas in B onwards."""
         r = [{"userEnteredValue": {"stringValue": label}}]
         for f in formulas:
-            r.append({"userEnteredValue": {"formulaValue": f}})
+            if f and f.startswith("="):
+                r.append({"userEnteredValue": {"formulaValue": f}})
+            else:
+                r.append({"userEnteredValue": {"stringValue": str(f) if f else ""}})
         return r
 
     def _status_row(label, check_formulas):
-        """Row with label in A, PASS/FAIL checks in B onwards."""
         r = [{"userEnteredValue": {"stringValue": label}}]
         for f in check_formulas:
             r.append({"userEnteredValue": {"formulaValue": f}})
         return r
 
-    # Title
-    rows.append({"values": _header("SAFE-HARBOR VALIDATION REPORT")})
-    rows.append({"values": _label("All checks are live Google Sheets formulas — click any cell to verify.")})
-    rows.append({"values": []})  # blank
+    def _add(row_values):
+        nonlocal current_row
+        rows.append({"values": row_values})
+        current_row += 1
 
+    # Title
+    _add(_header("SAFE-HARBOR VALIDATION REPORT"))
+    _add(_label("All checks are live Google Sheets formulas \u2014 click any cell to verify."))
+    _add([])  # blank
     # Period headers row
     period_row = [{"userEnteredValue": {"stringValue": ""}}]
     for p in periods:
         period_row.append({"userEnteredValue": {"stringValue": p["label"]}, "userEnteredFormat": {"textFormat": {"bold": True}}})
-    rows.append({"values": period_row})
+    _add(period_row)
 
-    # ── Section 1: Balance Sheet Identity ──
-    rows.append({"values": []})
-    rows.append({"values": _header("1. BALANCE SHEET IDENTITY (Assets = Liabilities + Equity)")})
-    if has_bs:
-        rows.append({"values": _formula_row("Total Assets", [f"='Balance Sheet'!{c}20" for c in cols])})
-        rows.append({"values": _formula_row("Total Liabilities", [f"='Balance Sheet'!{c}36" for c in cols])})
-        rows.append({"values": _formula_row("Total Equity", [f"='Balance Sheet'!{c}42" for c in cols])})
-        rows.append({"values": _formula_row("Δ (Assets - L - E)", [f"='Balance Sheet'!{c}20-('Balance Sheet'!{c}36+'Balance Sheet'!{c}42)" for c in cols])})
-        rows.append({"values": _status_row("✓ Status", [f'=IF(ABS(\'Balance Sheet\'!{c}20-(\'Balance Sheet\'!{c}36+\'Balance Sheet\'!{c}42))<1,"PASS","FAIL")' for c in cols])})
+    # ── Section 1: Balance Sheet Identity (UNIVERSAL) ──
+    _add([])
+    _add(_header("1. BALANCE SHEET IDENTITY (Assets = Liabilities + Equity)"))
+    r_ta = _r(bs_name, "bs_total_assets")
+    r_tl = _r(bs_name, "bs_total_liab")
+    r_te = _r(bs_name, "bs_total_equity")
+    if has_bs and all([r_ta, r_tl, r_te]):
+        bs = bs_name
+        _add(_formula_row("Total Assets", [f"='{bs}'!{c}{r_ta}" for c in cols]))
+        _add(_formula_row("Total Liabilities", [f"='{bs}'!{c}{r_tl}" for c in cols]))
+        _add(_formula_row("Total Equity", [f"='{bs}'!{c}{r_te}" for c in cols]))
+        _add(_formula_row("\u0394 (Assets - L - E)", [f"='{bs}'!{c}{r_ta}-('{bs}'!{c}{r_tl}+'{bs}'!{c}{r_te})" for c in cols]))
+        _add(_status_row("\u2713 Status", [f"=IF(ABS('{bs}'!{c}{r_ta}-('{bs}'!{c}{r_tl}+'{bs}'!{c}{r_te}))<1,\"PASS\",\"FAIL\")" for c in cols]))
 
-    # ── Section 2: Gross Margin ──
-    rows.append({"values": []})
-    rows.append({"values": _header("2. MARGIN ANALYSIS")})
-    if has_is:
-        rows.append({"values": _formula_row("Revenue", [f"='Income Statement'!{c}4" for c in cols])})
-        rows.append({"values": _formula_row("Gross Profit", [f"='Income Statement'!{c}6" for c in cols])})
-        rows.append({"values": _formula_row("Gross Margin %", [f"='Income Statement'!{c}6/'Income Statement'!{c}4" for c in cols])})
-        rows.append({"values": _formula_row("EBITDA", [f"='Income Statement'!{c}14" for c in cols])})
-        rows.append({"values": _formula_row("EBITDA Margin %", [f"='Income Statement'!{c}14/'Income Statement'!{c}4" for c in cols])})
-        rows.append({"values": _formula_row("Net Income", [f"='Income Statement'!{c}29" for c in cols])})
-        rows.append({"values": _formula_row("Net Margin %", [f"='Income Statement'!{c}29/'Income Statement'!{c}4" for c in cols])})
-        rows.append({"values": _status_row("✓ Margins in range", [f'=IF(AND(\'Income Statement\'!{c}6/\'Income Statement\'!{c}4>0,\'Income Statement\'!{c}6/\'Income Statement\'!{c}4<1),"PASS","FAIL")' for c in cols])})
+    # ── Section 2: Margin Analysis (UNIVERSAL) ──
+    _add([])
+    _add(_header("2. MARGIN ANALYSIS"))
+    r_rev = _r(is_name, "is_revenue")
+    r_gp = _r(is_name, "is_gross_profit")
+    r_ebitda = _r(is_name, "is_ebitda")
+    r_ni = _r(is_name, "is_net_income")
+    if has_is and r_rev:
+        isn = is_name
+        if r_gp:
+            _add(_formula_row("Revenue", [f"='{isn}'!{c}{r_rev}" for c in cols]))
+            _add(_formula_row("Gross Profit", [f"='{isn}'!{c}{r_gp}" for c in cols]))
+            _add(_formula_row("Gross Margin %", [f"=IFERROR('{isn}'!{c}{r_gp}/'{isn}'!{c}{r_rev},\"N/A\")" for c in cols]))
+        if r_ebitda:
+            _add(_formula_row("EBITDA", [f"='{isn}'!{c}{r_ebitda}" for c in cols]))
+            _add(_formula_row("EBITDA Margin %", [f"=IFERROR('{isn}'!{c}{r_ebitda}/'{isn}'!{c}{r_rev},\"N/A\")" for c in cols]))
+        if r_ni:
+            _add(_formula_row("Net Income", [f"='{isn}'!{c}{r_ni}" for c in cols]))
+            _add(_formula_row("Net Margin %", [f"=IFERROR('{isn}'!{c}{r_ni}/'{isn}'!{c}{r_rev},\"N/A\")" for c in cols]))
+        if r_gp:
+            _add(_status_row("\u2713 Margins in range", [f"=IF(AND(IFERROR('{isn}'!{c}{r_gp}/'{isn}'!{c}{r_rev},0)>0,IFERROR('{isn}'!{c}{r_gp}/'{isn}'!{c}{r_rev},0)<1),\"PASS\",\"FAIL\")" for c in cols]))
 
-    # ── Section 3: Revenue Growth ──
-    rows.append({"values": []})
-    rows.append({"values": _header("3. REVENUE GROWTH RATE")})
-    if has_is and len(cols) > 1:
-        growth_formulas = [""] + [f"='Income Statement'!{cols[i]}4/'Income Statement'!{cols[i-1]}4-1" for i in range(1, len(cols))]
-        rows.append({"values": _formula_row("YoY Growth %", growth_formulas)})
-        rows.append({"values": _formula_row("Avg Growth", ["", f"=AVERAGE({cols[1]}{'len(rows)'}:{cols[-1]}{'len(rows)'})" if len(cols) > 2 else ""])})
+    # ── Section 3: Revenue Growth (UNIVERSAL) ──
+    _add([])
+    _add(_header("3. REVENUE GROWTH RATE"))
+    if has_is and r_rev and len(cols) > 1:
+        isn = is_name
+        # Skip first period (no prior year), wrap in IFERROR
+        growth_formulas = [""]  # blank for FY2020
+        for i in range(1, len(cols)):
+            growth_formulas.append(f"=IFERROR('{isn}'!{cols[i]}{r_rev}/'{isn}'!{cols[i-1]}{r_rev}-1,\"N/A\")")
+        _add(_formula_row("YoY Growth %", growth_formulas))
+        # Track the row number where growth was written for Avg Growth reference
+        growth_row = current_row  # 1-indexed in Sheets (current_row already incremented)
+        if len(cols) > 2:
+            _add(_formula_row("Avg Growth", ["", f"=IFERROR(AVERAGE({cols[1]}{growth_row}:{cols[-1]}{growth_row}),\"N/A\")"]))
+        else:
+            _add(_formula_row("Avg Growth", [""]))
 
-    # ── Section 4: Cash Flow Reconciliation ──
-    rows.append({"values": []})
-    rows.append({"values": _header("4. CASH FLOW RECONCILIATION")})
-    if has_cf:
-        rows.append({"values": _formula_row("Beginning Cash", [f"='Cash Flow Statement'!{c}31" for c in cols])})
-        rows.append({"values": _formula_row("Net Change in Cash", [f"='Cash Flow Statement'!{c}30" for c in cols])})
-        rows.append({"values": _formula_row("Ending Cash", [f"='Cash Flow Statement'!{c}32" for c in cols])})
-        rows.append({"values": _formula_row("Δ (End - Begin - Net)", [f"='Cash Flow Statement'!{c}32-'Cash Flow Statement'!{c}31-'Cash Flow Statement'!{c}30" for c in cols])})
-        rows.append({"values": _status_row("✓ Status", [f'=IF(ABS(\'Cash Flow Statement\'!{c}32-\'Cash Flow Statement\'!{c}31-\'Cash Flow Statement\'!{c}30)<1,"PASS","FAIL")' for c in cols])})
+    # ── Section 4: Cash Flow Reconciliation (UNIVERSAL where CF exists) ──
+    _add([])
+    _add(_header("4. CASH FLOW RECONCILIATION"))
+    r_cf_begin = _r(cf_name, "cf_begin_cash")
+    r_cf_net = _r(cf_name, "cf_net_change")
+    r_cf_end = _r(cf_name, "cf_end_cash")
+    if has_cf and all([r_cf_begin, r_cf_net, r_cf_end]):
+        cfn = cf_name
+        _add(_formula_row("Beginning Cash", [f"='{cfn}'!{c}{r_cf_begin}" for c in cols]))
+        _add(_formula_row("Net Change in Cash", [f"='{cfn}'!{c}{r_cf_net}" for c in cols]))
+        _add(_formula_row("Ending Cash", [f"='{cfn}'!{c}{r_cf_end}" for c in cols]))
+        _add(_formula_row("\u0394 (End - Begin - Net)", [f"='{cfn}'!{c}{r_cf_end}-'{cfn}'!{c}{r_cf_begin}-'{cfn}'!{c}{r_cf_net}" for c in cols]))
+        _add(_status_row("\u2713 Status", [f"=IF(ABS('{cfn}'!{c}{r_cf_end}-'{cfn}'!{c}{r_cf_begin}-'{cfn}'!{c}{r_cf_net})<1,\"PASS\",\"FAIL\")" for c in cols]))
 
-    # ── Section 5: Debt Schedule Rollforward ──
-    rows.append({"values": []})
-    rows.append({"values": _header("5. DEBT SCHEDULE — SENIOR SECURED")})
-    if has_ds:
-        rows.append({"values": _formula_row("Beginning Balance", [f"='Debt Schedule'!{c}5" for c in cols])})
-        rows.append({"values": _formula_row("+ Drawdowns", [f"='Debt Schedule'!{c}6" for c in cols])})
-        rows.append({"values": _formula_row("- Repayments", [f"='Debt Schedule'!{c}7" for c in cols])})
-        rows.append({"values": _formula_row("= Ending Balance", [f"='Debt Schedule'!{c}9" for c in cols])})
-        rows.append({"values": _formula_row("Δ (End - Begin - Draw + Repay)", [f"='Debt Schedule'!{c}9-('Debt Schedule'!{c}5+'Debt Schedule'!{c}6+'Debt Schedule'!{c}7)" for c in cols])})
-        rows.append({"values": _status_row("✓ Status", [f'=IF(ABS(\'Debt Schedule\'!{c}9-(\'Debt Schedule\'!{c}5+\'Debt Schedule\'!{c}6+\'Debt Schedule\'!{c}7))<1,"PASS","FAIL")' for c in cols])})
+    # ── Section 5: Debt Schedule Rollforward (LBO ONLY) ──
+    if template_type == "LBO" and has_ds:
+        r_sb = _r(ds_name, "ds_senior_begin")
+        r_sd = _r(ds_name, "ds_senior_draw")
+        r_sr = _r(ds_name, "ds_senior_repay")
+        r_se = _r(ds_name, "ds_senior_end")
+        if all([r_sb, r_sd, r_sr, r_se]):
+            dsn = ds_name
+            _add([])
+            _add(_header("5. DEBT SCHEDULE \u2014 SENIOR"))
+            _add(_formula_row("Beginning Balance", [f"='{dsn}'!{c}{r_sb}" for c in cols]))
+            _add(_formula_row("+ Drawdowns", [f"='{dsn}'!{c}{r_sd}" for c in cols]))
+            _add(_formula_row("- Repayments", [f"='{dsn}'!{c}{r_sr}" for c in cols]))
+            _add(_formula_row("= Ending Balance", [f"='{dsn}'!{c}{r_se}" for c in cols]))
+            # FIXED: End - (Begin + Draw - Repay) — repayments REDUCE the balance
+            _add(_formula_row("\u0394 Rollforward", [f"='{dsn}'!{c}{r_se}-('{dsn}'!{c}{r_sb}+'{dsn}'!{c}{r_sd}-'{dsn}'!{c}{r_sr})" for c in cols]))
+            _add(_status_row("\u2713 Status", [f"=IF(ABS('{dsn}'!{c}{r_se}-('{dsn}'!{c}{r_sb}+'{dsn}'!{c}{r_sd}-'{dsn}'!{c}{r_sr}))<1,\"PASS\",\"FAIL\")" for c in cols]))
+
+        # Mezz rollforward
+        r_mb = _r(ds_name, "ds_mezz_begin")
+        r_md = _r(ds_name, "ds_mezz_draw")
+        r_mr = _r(ds_name, "ds_mezz_repay")
+        r_me = _r(ds_name, "ds_mezz_end")
+        if all([r_mb, r_md, r_mr, r_me]):
+            dsn = ds_name
+            _add([])
+            _add(_header("5b. DEBT SCHEDULE \u2014 MEZZANINE"))
+            _add(_formula_row("Beginning Balance", [f"='{dsn}'!{c}{r_mb}" for c in cols]))
+            _add(_formula_row("+ Drawdowns", [f"='{dsn}'!{c}{r_md}" for c in cols]))
+            _add(_formula_row("- Repayments", [f"='{dsn}'!{c}{r_mr}" for c in cols]))
+            _add(_formula_row("= Ending Balance", [f"='{dsn}'!{c}{r_me}" for c in cols]))
+            _add(_formula_row("\u0394 Rollforward", [f"='{dsn}'!{c}{r_me}-('{dsn}'!{c}{r_mb}+'{dsn}'!{c}{r_md}-'{dsn}'!{c}{r_mr})" for c in cols]))
+            _add(_status_row("\u2713 Status", [f"=IF(ABS('{dsn}'!{c}{r_me}-('{dsn}'!{c}{r_mb}+'{dsn}'!{c}{r_md}-'{dsn}'!{c}{r_mr}))<1,\"PASS\",\"FAIL\")" for c in cols]))
 
     # ── Section 6: Cross-Sheet Linkage ──
-    rows.append({"values": []})
-    rows.append({"values": _header("6. CROSS-SHEET LINKAGE")})
-    if has_is and has_cf:
-        rows.append({"values": _formula_row("IS: D&A", [f"='Income Statement'!{c}17" for c in cols])})
-        rows.append({"values": _formula_row("CF: D&A Add-back", [f"='Cash Flow Statement'!{c}6" for c in cols])})
-        rows.append({"values": _formula_row("Δ (IS D&A - CF D&A)", [f"=ABS('Income Statement'!{c}17)-ABS('Cash Flow Statement'!{c}6)" for c in cols])})
-        rows.append({"values": _status_row("✓ D&A Linkage", [f'=IF(ABS(ABS(\'Income Statement\'!{c}17)-ABS(\'Cash Flow Statement\'!{c}6))<1,"PASS","FAIL")' for c in cols])})
-    if has_is and has_ds:
-        rows.append({"values": _formula_row("IS: Total Interest", [f"='Income Statement'!{c}23" for c in cols])})
-        rows.append({"values": _formula_row("DS: Total Interest", [f"='Debt Schedule'!{c}27" for c in cols])})
-        rows.append({"values": _status_row("✓ Interest Linkage", [f'=IF(ABS(ABS(\'Income Statement\'!{c}23)-ABS(\'Debt Schedule\'!{c}27))<1,"PASS","FAIL")' for c in cols])})
+    _add([])
+    _add(_header("6. CROSS-SHEET LINKAGE"))
+    r_is_da = _r(is_name, "is_da")
+    r_cf_da = _r(cf_name, "cf_da")
+    if has_is and has_cf and r_is_da and r_cf_da:
+        isn = is_name
+        cfn = cf_name
+        _add(_formula_row("IS: D&A", [f"='{isn}'!{c}{r_is_da}" for c in cols]))
+        _add(_formula_row("CF: D&A Add-back", [f"='{cfn}'!{c}{r_cf_da}" for c in cols]))
+        _add(_formula_row("\u0394 (IS D&A - CF D&A)", [f"=ABS('{isn}'!{c}{r_is_da})-ABS('{cfn}'!{c}{r_cf_da})" for c in cols]))
+        _add(_status_row("\u2713 D&A Linkage", [f"=IF(ABS(ABS('{isn}'!{c}{r_is_da})-ABS('{cfn}'!{c}{r_cf_da}))<1,\"PASS\",\"FAIL\")" for c in cols]))
 
-    # ── Section 7: Statistical Summary ──
-    rows.append({"values": []})
-    rows.append({"values": _header("7. STATISTICAL DISTRIBUTION")})
-    if has_is:
-        rev_range = f"'Income Statement'!{cols[0]}4:{cols[-1]}4"
-        margin_range = f"'Income Statement'!{cols[0]}7:{cols[-1]}7"
-        rows.append({"values": [
+    r_is_int = _r(is_name, "is_interest_expense")
+    r_ds_int = _r(ds_name, "ds_total_interest")
+    if has_is and has_ds and r_is_int and r_ds_int:
+        isn = is_name
+        dsn = ds_name
+        _add(_formula_row("IS: Total Interest", [f"='{isn}'!{c}{r_is_int}" for c in cols]))
+        _add(_formula_row("DS: Total Interest", [f"='{dsn}'!{c}{r_ds_int}" for c in cols]))
+        _add(_status_row("\u2713 Interest Linkage", [f"=IF(ABS(ABS('{isn}'!{c}{r_is_int})-ABS('{dsn}'!{c}{r_ds_int}))<1,\"PASS\",\"FAIL\")" for c in cols]))
+
+    # ── Section 7: Statistical Summary (UNIVERSAL) ──
+    _add([])
+    _add(_header("7. STATISTICAL DISTRIBUTION"))
+    if has_is and r_rev:
+        isn = is_name
+        rev_range = f"'{isn}'!{cols[0]}{r_rev}:{cols[-1]}{r_rev}"
+        _add([
             {"userEnteredValue": {"stringValue": "Revenue"}},
             {"userEnteredValue": {"stringValue": "Mean"}},
             {"userEnteredValue": {"formulaValue": f"=AVERAGE({rev_range})"}},
             {"userEnteredValue": {"stringValue": "Std Dev"}},
             {"userEnteredValue": {"formulaValue": f"=STDEV({rev_range})"}},
             {"userEnteredValue": {"stringValue": "CV"}},
-            {"userEnteredValue": {"formulaValue": f"=STDEV({rev_range})/AVERAGE({rev_range})"}},
-        ]})
-        rows.append({"values": [
-            {"userEnteredValue": {"stringValue": "Gross Margin"}},
-            {"userEnteredValue": {"stringValue": "Mean"}},
-            {"userEnteredValue": {"formulaValue": f"=AVERAGE({margin_range})"}},
-            {"userEnteredValue": {"stringValue": "Min"}},
-            {"userEnteredValue": {"formulaValue": f"=MIN({margin_range})"}},
-            {"userEnteredValue": {"stringValue": "Max"}},
-            {"userEnteredValue": {"formulaValue": f"=MAX({margin_range})"}},
-        ]})
+            {"userEnteredValue": {"formulaValue": f"=IFERROR(STDEV({rev_range})/AVERAGE({rev_range}),\"N/A\")"}},
+        ])
+        # Gross Margin computed inline (no margin row in template)
+        if r_gp:
+            _add([
+                {"userEnteredValue": {"stringValue": "Gross Margin"}},
+                {"userEnteredValue": {"stringValue": "Mean"}},
+                {"userEnteredValue": {"formulaValue": f"=IFERROR(AVERAGE(ARRAYFORMULA('{isn}'!{cols[0]}{r_gp}:{cols[-1]}{r_gp}/'{isn}'!{cols[0]}{r_rev}:{cols[-1]}{r_rev})),\"N/A\")"}},
+                {"userEnteredValue": {"stringValue": "Min"}},
+                {"userEnteredValue": {"formulaValue": f"=IFERROR(MIN(ARRAYFORMULA('{isn}'!{cols[0]}{r_gp}:{cols[-1]}{r_gp}/'{isn}'!{cols[0]}{r_rev}:{cols[-1]}{r_rev})),\"N/A\")"}},
+                {"userEnteredValue": {"stringValue": "Max"}},
+                {"userEnteredValue": {"formulaValue": f"=IFERROR(MAX(ARRAYFORMULA('{isn}'!{cols[0]}{r_gp}:{cols[-1]}{r_gp}/'{isn}'!{cols[0]}{r_rev}:{cols[-1]}{r_rev})),\"N/A\")"}},
+            ])
 
-    # ── Section 8: Leverage Ratios ──
-    rows.append({"values": []})
-    rows.append({"values": _header("8. LEVERAGE & COVERAGE RATIOS")})
-    if has_ds and has_is:
-        rows.append({"values": _formula_row("Total Debt (Senior End)", [f"='Debt Schedule'!{c}9" for c in cols])})
-        rows.append({"values": _formula_row("Debt / EBITDA", [f"=IF('Income Statement'!{c}14<>0,'Debt Schedule'!{c}9/'Income Statement'!{c}14,\"N/A\")" for c in cols])})
-        rows.append({"values": _formula_row("Interest Coverage (EBIT/Interest)", [f"=IF('Income Statement'!{c}23<>0,'Income Statement'!{c}18/ABS('Income Statement'!{c}23),\"N/A\")" for c in cols])})
+    # ── Section 8: Leverage Ratios (LBO ONLY) ──
+    if template_type == "LBO" and has_ds and has_is:
+        r_se = _r(ds_name, "ds_senior_end")
+        r_ebitda_is = _r(is_name, "is_ebitda")
+        r_ebit_is = _r(is_name, "is_ebit")
+        r_is_int2 = _r(is_name, "is_interest_expense")
+        if r_se and r_ebitda_is:
+            dsn = ds_name
+            isn = is_name
+            _add([])
+            _add(_header("8. LEVERAGE & COVERAGE RATIOS"))
+            _add(_formula_row("Total Debt (Senior End)", [f"='{dsn}'!{c}{r_se}" for c in cols]))
+            _add(_formula_row("Debt / EBITDA", [f"=IFERROR('{dsn}'!{c}{r_se}/'{isn}'!{c}{r_ebitda_is},\"N/A\")" for c in cols]))
+            if r_ebit_is and r_is_int2:
+                _add(_formula_row("Interest Coverage (EBIT/Interest)", [f"=IFERROR('{isn}'!{c}{r_ebit_is}/ABS('{isn}'!{c}{r_is_int2}),\"N/A\")" for c in cols]))
 
     # Write the validation sheet
     sheet_meta = sheets_svc.spreadsheets().get(
@@ -321,7 +425,7 @@ def _add_validation_sheet(sheets_svc, spreadsheet_id: str, wb):
     ).execute()
     val_sheet_id = None
     for s in sheet_meta['sheets']:
-        if s['properties']['title'] == '✓ Validation':
+        if s['properties']['title'] == '\u2713 Validation':
             val_sheet_id = s['properties']['sheetId']
             break
 
@@ -453,7 +557,10 @@ async def create_google_sheet(job_id: str):
         raise HTTPException(status_code=500, detail="Google service account not configured")
 
     try:
-        return await asyncio.to_thread(_create_sheet_from_xlsx, job.output_file_path, f"SafeHarbor_{job_id[:8]}", sa_path, True)
+        return await asyncio.to_thread(
+            _create_sheet_from_xlsx, job.output_file_path, f"SafeHarbor_{job_id[:8]}", sa_path, True,
+            parsed_template=job.parsed_template
+        )
     except Exception as e:
         logger.error(f"Google Sheets creation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Google Sheets creation failed: {str(e)}")
