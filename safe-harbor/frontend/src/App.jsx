@@ -16,12 +16,8 @@ function App() {
     if (!jobId) return;
 
     if (lastEvent?.event_type === 'complete') {
-      // Pipeline complete — go straight to verdict
-      setAppPhase('VERDICT');
-      fetch(`${API_BASE}/api/audit/${jobId}`)
-        .then(res => res.json())
-        .then(data => setAuditData(data))
-        .catch(() => {});
+      // Pipeline complete — stay on terminal (shows Google Sheets embed)
+      setAppPhase('TERMINAL');
     } else if (wsPhase) {
       // Any active phase — show terminal with live progress
       setAppPhase('TERMINAL');
