@@ -62,7 +62,7 @@ export default function UploadZone({ onJobCreated }) {
     setLoading(true);
     setPreviewTemplate(null);
     try {
-      const res = await fetch(`/templates/${filename}`);
+      const res = await fetch(`${API_BASE}/templates/${filename}`);
       if (!res.ok) {
         setError("Failed to load sample template");
         setLoading(false);
