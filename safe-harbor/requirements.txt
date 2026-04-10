@@ -13,3 +13,4 @@ openai==1.66.*
 google-genai==1.14.*
 python-dotenv==1.0.*
 aiofiles==24.*
+formulas[excel]==1.3.*
