@@ -5,6 +5,7 @@ import functools
 import logging
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 from backend.models.schemas import TemplateSchema, SyntheticPayload, GenerationMetadata, TokenUsage, CellValue
 from backend.config import Settings
 
@@ -82,35 +83,47 @@ ABSOLUTE RULES:
 
 
 async def _llm_generate_values(client, model: str, prompt: str) -> tuple[dict, int]:
-    """Call Gemini and return a parsed dict of {key: value} + token count."""
-    response = await asyncio.to_thread(
-        functools.partial(
-            client.models.generate_content,
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=8192,
-                thinking_config=types.ThinkingConfig(thinking_budget=512),
-                response_mime_type="application/json",
-            ),
-        )
-    )
-    raw_text = response.text
-    if raw_text.startswith("```json"):
-        raw_text = raw_text[7:]
-    if raw_text.endswith("```"):
-        raw_text = raw_text[:-3]
-    parsed = json.loads(raw_text)
-    # Normalize: if it returned a list, convert to dict by index
-    if isinstance(parsed, list):
-        parsed = {str(i + 1): v for i, v in enumerate(parsed)}
-    # If nested (e.g. {"values": {...}}), unwrap
-    if len(parsed) == 1 and isinstance(list(parsed.values())[0], dict):
-        parsed = list(parsed.values())[0]
-    usage_meta = getattr(response, 'usage_metadata', None)
-    tokens = getattr(usage_meta, 'candidates_token_count', 0) if usage_meta else 0
-    return parsed, tokens
+    """Call Gemini and return a parsed dict of {key: value} + token count. Retries up to 3 times on 429."""
+    max_retries = 3
+    backoff_delays = [2, 4, 8]
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = await asyncio.to_thread(
+                functools.partial(
+                    client.models.generate_content,
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.3,
+                        max_output_tokens=8192,
+                        thinking_config=types.ThinkingConfig(thinking_budget=512),
+                        response_mime_type="application/json",
+                    ),
+                )
+            )
+            raw_text = response.text
+            if raw_text.startswith("```json"):
+                raw_text = raw_text[7:]
+            if raw_text.endswith("```"):
+                raw_text = raw_text[:-3]
+            parsed = json.loads(raw_text)
+            # Normalize: if it returned a list, convert to dict by index
+            if isinstance(parsed, list):
+                parsed = {str(i + 1): v for i, v in enumerate(parsed)}
+            # If nested (e.g. {"values": {...}}), unwrap
+            if len(parsed) == 1 and isinstance(list(parsed.values())[0], dict):
+                parsed = list(parsed.values())[0]
+            usage_meta = getattr(response, 'usage_metadata', None)
+            tokens = getattr(usage_meta, 'candidates_token_count', 0) if usage_meta else 0
+            return parsed, tokens
+        except ClientError as e:
+            if e.code == 429 and attempt < max_retries:
+                delay = backoff_delays[attempt]
+                logger.warning(f"[SYNTH] 429 RESOURCE_EXHAUSTED — retry {attempt + 1}/{max_retries} in {delay}s")
+                await asyncio.to_thread(time.sleep, delay)
+            else:
+                raise
 
 
 def _build_cell_grid(cells: list) -> str:

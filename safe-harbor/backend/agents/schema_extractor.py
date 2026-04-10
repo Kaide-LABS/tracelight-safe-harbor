@@ -1,9 +1,11 @@
 import json
+import time
 import logging
 import asyncio
 import functools
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 from openai import OpenAI
 from backend.models.schemas import TemplateSchema
 from backend.config import Settings
@@ -72,26 +74,38 @@ Return ONLY a JSON array of column objects:
 
 
 async def _gemini_call(client, model: str, prompt: str) -> dict | list:
-    """Single Gemini call with JSON output."""
-    response = await asyncio.to_thread(
-        functools.partial(
-            client.models.generate_content,
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=1.0,
-                max_output_tokens=16384,
-                thinking_config=types.ThinkingConfig(thinking_budget=1024),
-                response_mime_type="application/json",
-            ),
-        )
-    )
-    raw_text = response.text
-    if raw_text.startswith("```json"):
-        raw_text = raw_text[7:]
-    if raw_text.endswith("```"):
-        raw_text = raw_text[:-3]
-    return json.loads(raw_text)
+    """Single Gemini call with JSON output. Retries up to 3 times on 429 RESOURCE_EXHAUSTED."""
+    max_retries = 3
+    backoff_delays = [2, 4, 8]
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = await asyncio.to_thread(
+                functools.partial(
+                    client.models.generate_content,
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=1.0,
+                        max_output_tokens=16384,
+                        thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                        response_mime_type="application/json",
+                    ),
+                )
+            )
+            raw_text = response.text
+            if raw_text.startswith("```json"):
+                raw_text = raw_text[7:]
+            if raw_text.endswith("```"):
+                raw_text = raw_text[:-3]
+            return json.loads(raw_text)
+        except ClientError as e:
+            if e.code == 429 and attempt < max_retries:
+                delay = backoff_delays[attempt]
+                logger.warning(f"[SCHEMA] 429 RESOURCE_EXHAUSTED — retry {attempt + 1}/{max_retries} in {delay}s")
+                await asyncio.to_thread(time.sleep, delay)
+            else:
+                raise
 
 
 async def _try_gemini(parsed_template: dict, settings: Settings, on_progress=None) -> TemplateSchema:
