@@ -13,7 +13,6 @@ function App() {
           </a>
           <div className="flex items-center gap-6 text-sm text-[#E6EDF3]/50">
             <a href={SAFE_HARBOR_URL} className="hover:text-[#4ADE80] transition-colors">Safe-Harbor</a>
-            <a href={SHIELD_WALL_URL} className="hover:text-[#4ADE80] transition-colors">Shield-Wall</a>
             <a href="https://tracelight.ai" target="_blank" className="hover:text-white transition-colors">tracelight.ai</a>
           </div>
         </div>
@@ -26,7 +25,7 @@ function App() {
           <p className="text-sm text-[#4ADE80] font-mono tracking-widest mb-4">AI SIDECARS</p>
           <h1 className="text-5xl font-bold tracking-tight text-white mb-4">Internal Tools Suite</h1>
           <p className="text-lg text-[#E6EDF3]/40 max-w-xl mx-auto">
-            Two AI-powered sidecars that operate at the boundaries of Tracelight's core DAG engine — never touching it.
+            AI-powered sidecars that operate at the boundaries of Tracelight's core DAG engine — never touching it.
           </p>
         </div>
 
@@ -55,8 +54,11 @@ function App() {
             </a>
           </div>
 
-          {/* Shield-Wall Card */}
-          <div className="flex-1 bg-[#161B22] border border-[#30363D] rounded-xl p-8 hover:border-[#58A6FF] transition-all group flex flex-col">
+          {/* Shield-Wall Card — Adjacent Idea (Coming Soon) */}
+          <div className="flex-1 bg-[#161B22] border border-[#30363D] rounded-xl p-8 opacity-60 flex flex-col relative">
+            <div className="absolute top-4 right-4">
+              <span className="text-[10px] font-mono text-[#58A6FF] border border-[#58A6FF]/30 bg-[#58A6FF]/10 rounded px-2 py-0.5">COMING SOON</span>
+            </div>
             <div className="flex items-center justify-between mb-6">
               <div className="w-12 h-12 bg-[#58A6FF]/10 rounded-lg flex items-center justify-center">
                 <svg className="w-6 h-6 text-[#58A6FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
@@ -73,9 +75,9 @@ function App() {
               <span className="bg-[#0D1117] px-2 py-1 rounded">ChromaDB RAG</span>
               <span className="bg-[#0D1117] px-2 py-1 rounded">5 Drift Checks</span>
             </div>
-            <a href={SHIELD_WALL_URL} className="block w-full py-3 text-center bg-[#0D1117] border border-[#30363D] hover:bg-[#58A6FF] hover:text-black hover:border-[#58A6FF] rounded-lg font-semibold transition-all text-sm">
-              Launch Shield-Wall
-            </a>
+            <div className="block w-full py-3 text-center bg-[#0D1117] border border-[#30363D] rounded-lg font-semibold text-sm text-[#E6EDF3]/30 cursor-not-allowed">
+              Architecture Designed
+            </div>
           </div>
 
         </div>
