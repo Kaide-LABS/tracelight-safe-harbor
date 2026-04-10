@@ -13,31 +13,72 @@ logger = logging.getLogger(__name__)
 # Smaller chunks = LLM never skips. 25 cells × ~5 tokens each = tiny output.
 MAX_CELLS_PER_CHUNK = 25
 
-FINANCIAL_CONTEXT = """FINANCIAL PARAMETERS:
-- Base revenue: $150M-$500M with 8-12% annual growth
-- COGS: 50-65% of revenue
-- SG&A: 10-20% of revenue
-- R&D: 3-8% of revenue
-- D&A: 3-6% of revenue
-- Effective tax rate: 21-28% (as decimal, e.g. 0.25)
-- EBITDA margins: 15-35%
-- Senior debt interest rate: 5-8% (as decimal, e.g. 0.065)
-- Mezzanine/PIK interest rate: 8-14% (as decimal, e.g. 0.10)
-- Senior debt beginning balance: $200M-$500M, repaying 5-15% annually
-- Mezzanine beginning balance: $50M-$150M
-- CapEx: $10M-$30M annually
-- Working capital changes: negative 2-5% of revenue change
-- Cash beginning of period: $20M-$50M
-- Entry EV/EBITDA multiple: 8x-12x
-- Exit EV/EBITDA multiple: 8x-12x
-- Investment horizon: 5 years
+FINANCIAL_CONTEXT = """You are generating synthetic data for a LEVERAGED BUYOUT (LBO) financial model.
+This data will be reviewed by private equity professionals. It must look realistic.
 
-RULES:
-- Revenue should grow steadily. Costs should scale proportionally.
+FINANCIAL PARAMETERS:
+- Base revenue: $250M-$500M in FY2020, growing 8-12% annually (MUST increase every year)
+- COGS: 55-65% of revenue (vary ±1-2% each year, NOT constant)
+- SG&A: 12-18% of revenue (vary ±0.5-1% each year)
+- R&D: 3-6% of revenue (grow slightly each year)
+- Other Operating Expenses: 1-3% of revenue
+- D&A: Start $10M-$20M, grow 5-10% annually as PP&E grows
+- Effective tax rate: 0.25 (as decimal, constant)
+- EBITDA margins: 18-30% (vary ±1-2% each year, NEVER identical across periods)
+- Senior debt interest rate: 0.055-0.075 (as decimal, constant across periods)
+- Mezzanine/PIK interest rate: 0.09-0.13 (as decimal, constant across periods)
+
+DEBT SCHEDULE (CRITICAL — no zeros):
+- Senior debt opening balance: $300M-$500M in FY2020
+- Senior debt MUST be repaid: mandatory amortization of $30M-$80M per year (NEVER zero)
+- Senior drawdowns: $0 after FY2020 (typical LBO — no new senior draws post-close)
+- Mezzanine opening balance: $80M-$150M in FY2020
+- Mezzanine repayments: $0 in early years, $5M-$20M in FY2024-FY2025 (bullet repayment)
+- Mezzanine drawdowns: $0 (PIK accrues, no new draws)
+
+BALANCE SHEET:
+- Cash: $25M-$50M, varying each period (NOT constant)
+- AR: 8-12% of revenue, growing with revenue
+- Inventory: 5-10% of revenue
+- PP&E Gross: $80M-$200M, increasing $15M-$25M annually (CapEx additions)
+- Accumulated Depreciation: starts -$20M, grows by D&A amount each year (NEGATIVE values)
+- Goodwill: $100M-$200M (constant — acquired at LBO entry)
+- Intangible Assets: $30M-$60M, declining 5-10% annually (amortization)
+- AP: 6-10% of revenue
+- Accrued Liabilities: 3-5% of revenue
+- Deferred Revenue: 1-3% of revenue
+- Common Equity: $100M-$200M (constant — sponsor equity at entry)
+- AOCI: small, $0-$5M
+
+CASH FLOW:
+- Working capital changes: -$5M to -$15M (negative = cash used as company grows)
+- CapEx: -$15M to -$30M (NEGATIVE, growing 5-8% annually)
+- Acquisitions: $0 (no bolt-ons in base case)
+- Dividends: $0 (all cash goes to debt paydown in LBO)
+- Debt drawdowns: $0 after FY2020 (no new borrowing)
+- Debt repayments: MUST match debt schedule senior repayments
+
+RETURNS ANALYSIS:
+- Entry year: 2020, Exit year: 2025, Horizon: 5
+- LTM EBITDA at entry: match FY2020 EBITDA from Income Statement
+- Entry EV/EBITDA multiple: 8x-12x
+- Exit EV/EBITDA multiple: 9x-12x (slight expansion)
+- Entry Equity = Entry EV - Net Debt at Entry
+- Sponsor equity invested: $100M-$200M
+- Management rollover: $5M-$15M
+- LTM EBITDA at exit: match FY2025 EBITDA
+- IRR Cash Flow: Year 0 = negative equity invested, Years 1-4 = $0 (no interim distributions), Year 5 = exit equity proceeds
+- IRR: 0.15-0.30 (as decimal)
+- MOIC: 2.0x-3.5x
+
+ABSOLUTE RULES:
+- NO zeros for debt repayments (senior must amortize every period)
+- NO constant/flat values across all periods (margins, revenue, costs MUST vary)
 - Percentages/rates as DECIMALS (25% = 0.25, NOT 25)
-- Currency values as whole numbers (no decimals for large amounts)
-- Generate REALISTIC values — no zeros, no ones, no placeholder values
-- EVERY key must have a value. Do NOT skip any."""
+- Currency values as whole numbers (no decimals)
+- Negative values where appropriate: Accumulated Depreciation, CapEx, Working Capital changes
+- EVERY key must have a non-zero value unless explicitly stated as $0 above
+- Values must tell a coherent story: revenue grows, debt pays down, equity value increases"""
 
 
 async def _llm_generate_values(client, model: str, prompt: str) -> tuple[dict, int]:
@@ -48,7 +89,7 @@ async def _llm_generate_values(client, model: str, prompt: str) -> tuple[dict, i
             model=model,
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=1.0,
+                temperature=0.3,
                 max_output_tokens=8192,
                 thinking_config=types.ThinkingConfig(thinking_budget=512),
                 response_mime_type="application/json",
@@ -300,7 +341,7 @@ async def generate_synthetic_data(schema: TemplateSchema, settings: Settings,
         cells=cell_values,
         generation_metadata=GenerationMetadata(
             model_used=settings.gemini_model,
-            temperature=1.0,
+            temperature=0.3,
             token_usage=TokenUsage(
                 prompt_tokens=0,
                 completion_tokens=total_tokens,
