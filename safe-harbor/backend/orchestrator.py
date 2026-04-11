@@ -14,6 +14,7 @@ from backend.agents.synthetic_gen import generate_synthetic_data
 from backend.agents.validator import DeterministicValidator
 from backend.agents.post_processor import post_process
 from backend.agents.bs_plug import balance_bs
+from backend.agents.archetype_validator import validate_archetype_conformance
 from backend.middleware import cost_tracker
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,11 @@ class PipelineOrchestrator:
         )
         self.jobs[job_id].audit_log.append(entry)
 
-    async def run_pipeline(self, job_id: str, file_path: str, ws_callback: Callable[[WSEvent], Awaitable[None]]):
+    async def run_pipeline(self, job_id: str, file_path: str, ws_callback: Callable[[WSEvent], Awaitable[None]],
+                           scenario_type: str = "general"):
         try:
             await asyncio.wait_for(
-                self._execute(job_id, file_path, ws_callback),
+                self._execute(job_id, file_path, ws_callback, scenario_type=scenario_type),
                 timeout=self.settings.generation_timeout_s
             )
         except asyncio.TimeoutError:
@@ -51,7 +53,8 @@ class PipelineOrchestrator:
             self.jobs[job_id].error_message = str(e)
             await ws_callback(WSEvent(job_id=job_id, phase="error", event_type="error", detail=str(e)))
 
-    async def _execute(self, job_id: str, file_path: str, ws_callback: Callable[[WSEvent], Awaitable[None]]):
+    async def _execute(self, job_id: str, file_path: str, ws_callback: Callable[[WSEvent], Awaitable[None]],
+                       scenario_type: str = "general"):
         # 1. Parse Phase
         self._update_status(job_id, "parsing")
         await ws_callback(WSEvent(job_id=job_id, phase="parse", event_type="progress", detail="Parsing Excel template..."))
@@ -88,7 +91,8 @@ class PipelineOrchestrator:
         for attempt in range(self.settings.max_retries):
             # Generate
             await ws_callback(WSEvent(job_id=job_id, phase="generate", event_type="progress", detail="Synthetic generation starting (sheet-by-sheet)..."))
-            payload = await generate_synthetic_data(schema, self.settings, retry_instructions, parsed_template=parsed)
+            payload = await generate_synthetic_data(schema, self.settings, retry_instructions, parsed_template=parsed,
+                                                        scenario_type=scenario_type)
 
             # Post-process: fix rolling balances, sign conventions, zero fills
             raw_cells = [c.model_dump() for c in payload.cells]
@@ -135,14 +139,37 @@ class PipelineOrchestrator:
             
             # Passed
             self._log_audit(job_id, "validate", "Validation passed", agent="DeterministicValidator", data={"status": result.status})
-            
-            # 4. Write Phase
+
+            # 4. Archetype Conformance (read-only — never modifies cells)
+            final_payload = result.validated_payload if result.validated_payload else payload
+            conformance = validate_archetype_conformance(final_payload, scenario_type)
+            self.jobs[job_id].conformance_report = conformance
+            self._log_audit(job_id, "validate", f"Archetype conformance: {conformance['overall_score']}", agent="ArchetypeValidator",
+                            data={"score": conformance["overall_score"], "pass_rate": conformance["pass_rate_pct"]})
+
+            # Write conformance report to disk (Claude CLI can Read this)
+            import json as _json
+            conformance_path = f"/tmp/safe_harbor/{job_id}/conformance_report.json"
+            with open(conformance_path, "w") as _f:
+                _json.dump(conformance, _f, indent=2)
+
+            # Send conformance metrics to frontend via WebSocket
+            await ws_callback(WSEvent(job_id=job_id, phase="conformance", event_type="progress",
+                                      detail=f"Archetype Conformance: {conformance['overall_score']} ({conformance['pass_rate_pct']}%)"))
+            for m in conformance["metrics"]:
+                status_icon = {"PASS": "✓", "WARN": "⚠", "FAIL": "✗", "N/A": "—"}.get(m["status"], "?")
+                await ws_callback(WSEvent(
+                    job_id=job_id, phase="conformance", event_type="validation",
+                    detail=f"{status_icon} {m['name']} [{m['period']}]: {m['actual']} (expected {m['expected_range']})",
+                    data=m
+                ))
+
+            # 5. Write Phase
             self._update_status(job_id, "writing")
             output_path = f"/tmp/safe_harbor/{job_id}/output.xlsx"
             import os
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
-            final_payload = result.validated_payload if result.validated_payload else payload
+
             await asyncio.to_thread(write_synthetic_data, file_path, final_payload, output_path)
 
             # Two-pass BS balance plug: evaluate formulas, compute imbalance, write correction

@@ -94,7 +94,7 @@ class ValidationResult(BaseModel):
 
 class AuditLogEntry(BaseModel):
     timestamp: str
-    phase: Literal["upload", "parse", "schema_extract", "generate", "validate", "write"]
+    phase: Literal["upload", "parse", "schema_extract", "generate", "validate", "conformance", "write"]
     agent: Optional[str] = None
     detail: str
     data: Optional[dict] = None
@@ -102,11 +102,13 @@ class AuditLogEntry(BaseModel):
 class JobState(BaseModel):
     job_id: str
     status: Literal["pending", "parsing", "extracting_schema", "generating", "validating", "writing", "complete", "error"]
+    scenario_type: str = "general"
     template_schema: Optional[TemplateSchema] = None
     synthetic_payload: Optional[SyntheticPayload] = None
     validation_result: Optional[ValidationResult] = None
     audit_log: List[AuditLogEntry] = Field(default_factory=list)
     cost_entries: List[dict] = Field(default_factory=list)
+    conformance_report: Optional[dict] = None
     output_file_path: Optional[str] = None
     error_message: Optional[str] = None
     retry_count: int = 0

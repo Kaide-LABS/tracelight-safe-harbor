@@ -8,16 +8,25 @@ const SAMPLE_TEMPLATES = [
   { name: '3-Statement', file: '3_Statement_Model.xlsx', desc: 'IS + BS + CF — 3 sheets, 296 input cells, fully linked with working capital', enabled: false },
 ];
 
+const SCENARIO_OPTIONS = [
+  { value: 'general', label: 'General LBO', desc: 'Standard parameters — 8-12% revenue growth, 18-30% EBITDA margins' },
+  { value: 'distressed_turnaround', label: 'Distressed Turnaround', desc: 'Low entry margins (3-8%), V-shaped recovery, high leverage' },
+  { value: 'high_growth_tech', label: 'High-Growth Tech', desc: '18-30% revenue growth, negative-to-positive EBITDA, low leverage' },
+  { value: 'mature_cashcow', label: 'Mature Cash-Cow', desc: 'Stable 2-5% growth, 16-22% margins, high leverage on steady cash flows' },
+];
+
 export default function UploadZone({ onJobCreated }) {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState(null);
+  const [scenarioType, setScenarioType] = useState('general');
 
   const uploadFile = async (file) => {
     setError(null);
     setLoading(true);
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('scenario_type', scenarioType);
 
     try {
       const res = await fetch(`${API_BASE}/api/upload`, {
@@ -107,6 +116,27 @@ export default function UploadZone({ onJobCreated }) {
 
       {error && <p className="text-harbor-red mt-4 text-sm">{error}</p>}
       {loading && <p className="text-harbor-green mt-4 animate-pulse text-sm">Uploading...</p>}
+
+      {/* Scenario Selector */}
+      <div className="w-full max-w-3xl mt-6">
+        <p className="text-harbor-text/40 text-xs uppercase tracking-wider mb-3 text-center">Deal Archetype</p>
+        <div className="grid grid-cols-2 gap-3">
+          {SCENARIO_OPTIONS.map(s => (
+            <button
+              key={s.value}
+              onClick={() => setScenarioType(s.value)}
+              className={`text-left p-3 rounded-lg border transition-all ${
+                scenarioType === s.value
+                  ? 'border-harbor-green bg-harbor-green/10 text-harbor-green'
+                  : 'border-harbor-border bg-harbor-surface text-harbor-text/70 hover:border-harbor-text/30'
+              }`}
+            >
+              <div className="font-semibold text-sm">{s.label}</div>
+              <div className="text-xs mt-1 opacity-60">{s.desc}</div>
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* How it works */}
       <div className="w-full max-w-3xl mt-6 grid grid-cols-3 gap-4 text-center text-xs text-harbor-text/50">

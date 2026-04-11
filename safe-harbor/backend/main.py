@@ -3,7 +3,7 @@ import uuid
 import json
 import asyncio
 import logging
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from backend.config import get_settings
@@ -79,7 +79,7 @@ def _get_google_creds(sa_path: str):
         return service_account.Credentials.from_service_account_file(sa_path, scopes=SCOPES)
 
 
-def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_validation: bool = False, parsed_template: dict = None) -> dict:
+def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_validation: bool = False, parsed_template: dict = None, conformance_report: dict = None) -> dict:
     """Read xlsx with openpyxl, create Google Sheet via Sheets API, write all data."""
     import openpyxl
     from googleapiclient.discovery import build
@@ -144,7 +144,7 @@ def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_valida
 
     # Add Validation sheet with live formulas (only for generated output, not templates)
     if add_validation:
-        _add_validation_sheet(sheets_svc, spreadsheet_id, wb, parsed_template=parsed_template)
+        _add_validation_sheet(sheets_svc, spreadsheet_id, wb, parsed_template=parsed_template, conformance_report=conformance_report)
 
     # Make publicly viewable
     drive_svc.permissions().create(
@@ -158,7 +158,7 @@ def _create_sheet_from_xlsx(xlsx_path: str, title: str, sa_path: str, add_valida
     return {"embed_url": embed_url, "view_url": view_url, "sheet_id": spreadsheet_id}
 
 
-def _add_validation_sheet(sheets_svc, spreadsheet_id: str, wb, parsed_template: dict = None):
+def _add_validation_sheet(sheets_svc, spreadsheet_id: str, wb, parsed_template: dict = None, conformance_report: dict = None):
     """Add a 'Validation' sheet with live formulas proving data integrity.
     Uses row_map from parsed_template for all row references — no hardcoded numbers."""
     import re
@@ -427,6 +427,40 @@ def _add_validation_sheet(sheets_svc, spreadsheet_id: str, wb, parsed_template: 
             if r_ebit_is and r_is_int2:
                 _add(_formula_row("Interest Coverage (EBIT/Interest)", [f"=IFERROR('{isn}'!{c}{r_ebit_is}/ABS('{isn}'!{c}{r_is_int2}),\"N/A\")" for c in cols]))
 
+    # ── Section 9: Archetype Conformance Report ──
+    if conformance_report and conformance_report.get("metrics"):
+        _add([])
+        _add(_header(f"9. ARCHETYPE CONFORMANCE — {conformance_report.get('scenario_type', 'general').upper().replace('_', ' ')}"))
+        _add(_label(f"Overall Score: {conformance_report.get('overall_score', 'N/A')} ({conformance_report.get('pass_rate_pct', 0)}%)"))
+        _add([])
+        # Header row
+        conf_header = [
+            {"userEnteredValue": {"stringValue": "Metric"}, "userEnteredFormat": {"textFormat": {"bold": True}}},
+            {"userEnteredValue": {"stringValue": "Period"}, "userEnteredFormat": {"textFormat": {"bold": True}}},
+            {"userEnteredValue": {"stringValue": "Expected Range"}, "userEnteredFormat": {"textFormat": {"bold": True}}},
+            {"userEnteredValue": {"stringValue": "Actual"}, "userEnteredFormat": {"textFormat": {"bold": True}}},
+            {"userEnteredValue": {"stringValue": "Status"}, "userEnteredFormat": {"textFormat": {"bold": True}}},
+            {"userEnteredValue": {"stringValue": "Source"}, "userEnteredFormat": {"textFormat": {"bold": True}}},
+        ]
+        _add(conf_header)
+        for m in conformance_report["metrics"]:
+            expected = m.get("expected_range", "")
+            if isinstance(expected, list) and len(expected) == 2:
+                expected_str = f"{expected[0]} — {expected[1]}"
+            else:
+                expected_str = str(expected)
+            actual_val = m.get("actual")
+            actual_str = str(actual_val) if actual_val is not None else "N/A"
+            status = m.get("status", "N/A")
+            _add([
+                {"userEnteredValue": {"stringValue": m.get("name", "")}},
+                {"userEnteredValue": {"stringValue": m.get("period", "")}},
+                {"userEnteredValue": {"stringValue": expected_str}},
+                {"userEnteredValue": {"stringValue": actual_str}},
+                {"userEnteredValue": {"stringValue": status}},
+                {"userEnteredValue": {"stringValue": m.get("source", "")}},
+            ])
+
     # Write the validation sheet
     sheet_meta = sheets_svc.spreadsheets().get(
         spreadsheetId=spreadsheet_id, fields='sheets.properties'
@@ -455,24 +489,28 @@ async def startup():
     os.makedirs("/tmp/safe_harbor", exist_ok=True)
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), scenario_type: str = Form("general")):
     if not file.filename.endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Must be an .xlsx or .xlsm file")
-    
+
+    valid_scenarios = ["general", "distressed_turnaround", "high_growth_tech", "mature_cashcow"]
+    if scenario_type not in valid_scenarios:
+        scenario_type = "general"
+
     job_id = str(uuid.uuid4())
     job_dir = f"/tmp/safe_harbor/{job_id}"
     os.makedirs(job_dir, exist_ok=True)
     file_path = f"{job_dir}/template.xlsx"
-    
+
     content = await file.read()
     if len(content) > settings.max_file_size_mb * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large")
-        
+
     with open(file_path, "wb") as f:
         f.write(content)
-        
-    orchestrator.jobs[job_id] = JobState(job_id=job_id, status="pending")
-    return {"job_id": job_id}
+
+    orchestrator.jobs[job_id] = JobState(job_id=job_id, status="pending", scenario_type=scenario_type)
+    return {"job_id": job_id, "scenario_type": scenario_type}
 
 @app.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
@@ -488,8 +526,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     async def ws_callback(event):
         await websocket.send_text(event.model_dump_json())
         
+    job = orchestrator.jobs[job_id]
+    scenario_type = getattr(job, 'scenario_type', 'general') or 'general'
     try:
-        await orchestrator.run_pipeline(job_id, file_path, ws_callback)
+        await orchestrator.run_pipeline(job_id, file_path, ws_callback, scenario_type=scenario_type)
     except WebSocketDisconnect:
         logger.info(f"Client disconnected for job {job_id}")
     finally:
@@ -567,7 +607,8 @@ async def create_google_sheet(job_id: str):
     try:
         return await asyncio.to_thread(
             _create_sheet_from_xlsx, job.output_file_path, f"SafeHarbor_{job_id[:8]}", sa_path, True,
-            parsed_template=job.parsed_template
+            parsed_template=job.parsed_template,
+            conformance_report=getattr(job, 'conformance_report', None)
         )
     except Exception as e:
         logger.error(f"Google Sheets creation failed: {e}")
@@ -642,6 +683,19 @@ async def get_spreadsheet_data(job_id: str):
             "cells": cells,
         })
     return {"sheets": sheets}
+
+
+@app.get("/api/conformance/{job_id}")
+async def get_conformance(job_id: str):
+    """Return the archetype conformance report for a completed job."""
+    if job_id not in orchestrator.jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = orchestrator.jobs[job_id]
+    if job.status != "complete":
+        raise HTTPException(status_code=400, detail="Job not complete")
+    if not job.conformance_report:
+        raise HTTPException(status_code=404, detail="No conformance report available")
+    return job.conformance_report
 
 
 @app.get("/api/costs/{job_id}")
